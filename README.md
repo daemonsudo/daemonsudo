@@ -12,7 +12,16 @@ No accounts, no cloud, no code changes, no public URL. MIT.
 
 ## 60-second install
 
-Prepend daemonsudo to any MCP server command in your client config (Claude Desktop / Claude Code / Cursor / anything MCP):
+Two commands to gated. First, write a curated ruleset for your server:
+
+```bash
+npx daemonsudo init --preset github   # or: postgres | stripe | filesystem | browser
+# plain `npx daemonsudo init` writes the safe-by-default skeleton
+```
+
+Each preset is a plain, commented gate.yaml (they live in [`presets/`](presets/)) — reads pass through, writes knock, the destructive tier is denied outright. Edit it like any config file.
+
+Then prepend daemonsudo to that MCP server's command in your client config (Claude Desktop / Claude Code / Cursor / anything MCP):
 
 ```jsonc
 // before                                   // after
@@ -110,8 +119,30 @@ bun test          # unit + e2e against the in-repo mock MCP server, incl. the
 bun run build     # tsc → dist/
 ```
 
+## Telemetry (opt-in, off by default)
+
+daemonsudo phones home only if you put `telemetry: true` in your gate.yaml. At most once a week it POSTs exactly this to `https://daemonsudo.dev/ping`:
+
+```json
+{ "version": "0.1.0", "anon_id": "<random hex generated locally on first ping>" }
+```
+
+That is the entire payload — nothing about your tools, rules, args, or traffic, ever. If the endpoint is unreachable the ping is dropped silently; telemetry runs fire-and-forget and can never affect gating.
+
 ## v0.1 scope
 
-Approvals (web + Telegram), rules, redaction, signed receipts, `verify`. Deliberately **not** here yet: dry-run previews, undo contracts, Cedar policies, Slack/Discord, Postgres, Docker, hosted anything. The local single-user flow is free forever.
+Approvals (web + Telegram), rules + presets, redaction, signed receipts, `verify`. Deliberately **not** here yet: dry-run previews, undo contracts, Cedar policies, Slack/Discord, Postgres, Docker, hosted anything. The local single-user flow is free forever.
+
+## Roadmap
+
+Demand-driven — 👍 an issue to vote it up:
+
+- [Slack & Discord approval channels](https://github.com/daemonsudo/daemonsudo/issues/1)
+- [Claude Code PreToolUse hook adapter](https://github.com/daemonsudo/daemonsudo/issues/2) — gate native Bash/Edit/Write tools, not just MCP
+- [More rule presets — which servers?](https://github.com/daemonsudo/daemonsudo/issues/3)
+
+---
+
+daemonsudo is not affiliated with or endorsed by the sudo project or Anonyome Labs' Sudo Platform.
 
 MIT © daemonsudo contributors
