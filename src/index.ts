@@ -96,6 +96,15 @@ async function main(): Promise<void> {
   if (cmd.length === 0) usage();
   const config = loadConfig(configPath);
   const db = await openDb(defaultDbPath());
+  // fold the WAL back into the db file on exit so a copied gate.db is
+  // self-contained for offline `daemonsudo verify`
+  process.on("exit", () => {
+    try {
+      db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+    } catch {
+      /* best effort */
+    }
+  });
   const ledger = new Ledger(db, config.redact, makeSigner(loadOrCreateKeys(db)));
   const rules = new YamlGlobEngine(config.rules, config.defaults);
   const broker = new ApprovalBroker(db, config.timeoutMs);

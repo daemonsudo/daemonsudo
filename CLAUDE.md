@@ -31,12 +31,15 @@ v0.1 cut list is binding (GATE-PLAN §4): no Cedar, no Slack/Discord, no Postgre
 
 ## Commands
 
-(fill in as the repo takes shape)
-
 ```bash
-bun test          # unit + e2e
-bun run dev       # gate against the mock server
+bun install && bun run build   # tsc → dist/
+bun test                       # unit + e2e against examples/mock-server.mjs (incl. chaos fail-closed test)
+bun run dev                    # gate against the mock server (bun src/index.ts)
+node examples/demo.mjs         # end-to-end demo: auto call + web-approved delete
+node dist/index.js verify      # walk the receipt chain offline (also: receipts; --db <path>)
 ```
+
+Test fixtures pin web ports 14909–14913 to avoid clashes. Tests set `DAEMONSUDO_DB` to temp dirs; the real db lives at `~/.gate/gate.db` (WAL — checkpointed on gate exit so the single file stays self-contained).
 
 ## Ecosystem facts the docs assume
 

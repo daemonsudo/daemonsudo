@@ -1,0 +1,25 @@
+# gate.yaml — the sudoers file for your agents.
+# yaml-language-server: $schema=https://daemonsudo.dev/gate.schema.json
+
+defaults: approve            # unknown tools default to approve (safe-by-default)
+timeout: 10m                 # pending approval timeout; on timeout: deny
+
+rules:
+  read_*: auto
+  list_*: auto
+  get_*: auto
+  create_*: auto
+  delete_*: approve
+  send_*: approve
+  drop_*: deny
+
+redact:                      # these arg paths never land raw in receipts or cards
+  - "*.password"
+  - "*.api_key"
+
+channels:
+  # telegram:
+  #   token_env: GATE_TELEGRAM_TOKEN   # name of the env var, never the token
+  #   allowed_users: [123456789]       # telegram user IDs allowed to approve
+  web:
+    port: 4910

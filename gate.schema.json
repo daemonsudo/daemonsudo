@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://daemonsudo.dev/gate.schema.json",
+  "title": "daemonsudo gate.yaml — the sudoers file for your agents",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "defaults": {
+      "description": "Action when no rule matches a tool name. 'approve' is safe-by-default.",
+      "enum": ["auto", "approve", "deny"],
+      "default": "approve"
+    },
+    "timeout": {
+      "description": "How long a pending approval waits before it is denied. Number = seconds, or a string like '30s', '10m', '1h'.",
+      "type": ["string", "number"],
+      "default": "10m"
+    },
+    "rules": {
+      "description": "Glob on tool name → action. Most-specific glob wins, then file order.",
+      "type": "object",
+      "additionalProperties": { "enum": ["auto", "approve", "deny"] }
+    },
+    "redact": {
+      "description": "Arg paths (globs, e.g. '*.password') whose values are replaced with [redacted] in receipts and approval cards. Full args are only ever stored as a hash.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "channels": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "telegram": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "token_env": {
+              "description": "Name of the environment variable holding the bot token (never the token itself).",
+              "type": "string",
+              "default": "GATE_TELEGRAM_TOKEN"
+            },
+            "allowed_users": {
+              "description": "Telegram user IDs allowed to approve.",
+              "type": "array",
+              "items": { "type": "integer" }
+            }
+          }
+        },
+        "web": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "host": {
+              "description": "Bind address. Keep it on localhost unless you know what you are doing.",
+              "type": "string",
+              "default": "127.0.0.1"
+            },
+            "port": { "type": "integer", "default": 4910 }
+          }
+        }
+      }
+    }
+  }
+}

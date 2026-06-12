@@ -1,0 +1,13 @@
+{
+  "_comment": "Wrap any MCP server in one line: prepend daemonsudo to its command. Use an absolute --config path — MCP hosts don't promise a working directory.",
+  "mcpServers": {
+    "db-without-gate": {
+      "command": "npx",
+      "args": ["some-db-mcp"]
+    },
+    "db-with-gate": {
+      "command": "npx",
+      "args": ["daemonsudo", "--config", "/Users/you/gate.yaml", "--", "npx", "some-db-mcp"]
+    }
+  }
+}
