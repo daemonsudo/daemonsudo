@@ -55,6 +55,12 @@ describe("rule-gated calls", () => {
     expect(receipts[0].result?.status).toBe("ok");
     expect(receipts[0].server).toBe("mock-things");
     expect(JSON.stringify(receipts)).not.toContain("hunter2");
+    // requester correlation: MCP client identity + one session across the run
+    expect(receipts[0].requester?.client).toBeTruthy();
+    expect(receipts[0].requester?.call_id).toBeTruthy();
+    expect(receipts.map((r) => r.requester?.session)).toEqual(
+      Array(3).fill(receipts[0].requester?.session),
+    );
     db.close();
 
     await client.close();

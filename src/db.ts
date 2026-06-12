@@ -39,10 +39,14 @@ CREATE TABLE IF NOT EXISTS pending (
   decided_at TEXT
 );
 CREATE TABLE IF NOT EXISTS keys (
-  id INTEGER PRIMARY KEY CHECK (id = 1),
+  kid TEXT PRIMARY KEY,
   secret_hex TEXT NOT NULL,
   public_hex TEXT NOT NULL,
   created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ledger_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
 );
 `;
 
@@ -50,6 +54,16 @@ export async function openDb(path: string): Promise<Db> {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
   const db = await openRaw(path);
   db.exec("PRAGMA journal_mode = WAL;");
+  // pre-v1 dbs (keys table keyed by id, no kid) predate the frozen receipt schema
+  const legacy = db.get<{ n: number }>(
+    "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'keys' AND sql NOT LIKE '%kid%'",
+  );
+  if (legacy && legacy.n > 0) {
+    db.close();
+    throw new Error(
+      `pre-v1 ledger at ${path} — the daemonsudo/v1 receipt schema is incompatible; move or delete the file`,
+    );
+  }
   db.exec(SCHEMA);
   return db;
 }

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
+import { sha256 } from "./ledger.js";
 
 export type Action = "auto" | "approve" | "deny";
 
@@ -23,6 +24,8 @@ export interface GateConfig {
     host: string;
     port: number;
   };
+  /** sha256 of the gate.yaml bytes in force — stamped on every receipt */
+  gateHash: string;
 }
 
 const ACTIONS: Action[] = ["auto", "approve", "deny"];
@@ -56,9 +59,12 @@ export function defaultDbPath(): string {
  */
 export function loadConfig(path?: string): GateConfig {
   let raw: Record<string, unknown> = {};
+  let gateHash = sha256("daemonsudo-builtin-defaults");
   const file = path ?? join(process.cwd(), "gate.yaml");
   if (existsSync(file)) {
-    raw = (parse(readFileSync(file, "utf8")) ?? {}) as Record<string, unknown>;
+    const text = readFileSync(file, "utf8");
+    raw = (parse(text) ?? {}) as Record<string, unknown>;
+    gateHash = sha256(text);
   } else if (path) {
     throw new Error(`config file not found: ${path}`);
   }
@@ -86,5 +92,6 @@ export function loadConfig(path?: string): GateConfig {
       host: String(web.host ?? "127.0.0.1"),
       port: web.port === undefined ? 4910 : Number(web.port),
     },
+    gateHash,
   };
 }

@@ -9,8 +9,9 @@
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
+import { ulid } from "ulid";
 import type { ApprovalBroker } from "./broker.js";
-import { canonicalJson, sha256, type Ledger } from "./ledger.js";
+import { canonicalJson, sha256, type Ledger, type Requester } from "./ledger.js";
 import type { RuleEngine } from "./rules.js";
 
 export interface ToolCallRequest {
@@ -45,6 +46,10 @@ export class GateProxy {
   private initializeId: string | number | undefined;
   /** downstream server identity, sniffed from the initialize response */
   serverName: string;
+  /** client identity, sniffed from the initialize request's clientInfo */
+  clientName: string | undefined;
+  /** one id per gate run — correlates this run's receipts */
+  readonly sessionId = ulid();
 
   constructor(opts: GateProxyOptions) {
     this.interceptor = opts.interceptor;
@@ -86,6 +91,9 @@ export class GateProxy {
     const msg = m as Record<string, unknown>;
     if (msg.method === "initialize" && msg.id !== undefined) {
       this.initializeId = msg.id as string | number;
+      const info = (msg.params as { clientInfo?: { name?: string; version?: string } } | undefined)
+        ?.clientInfo;
+      if (info?.name) this.clientName = info.version ? `${info.name} ${info.version}` : info.name;
     }
     if (msg.method === "notifications/cancelled" && this.interceptor) {
       const requestId = (msg.params as { requestId?: string | number } | undefined)?.requestId;
@@ -178,9 +186,19 @@ export class ToolGate implements Interceptor {
     return true; // we never forwarded the request, so swallow the cancellation
   }
 
+  /** Who is asking, for the receipt: client identity + session + call correlation id. */
+  private requesterFor(msg: ToolCallRequest, proxy: GateProxy): Requester {
+    return {
+      ...(proxy.clientName ? { client: proxy.clientName } : {}),
+      session: proxy.sessionId,
+      call_id: String(msg.id),
+    };
+  }
+
   async handleToolCall(msg: ToolCallRequest, proxy: GateProxy): Promise<void> {
     const tool = msg.params.name;
     const args = msg.params.arguments ?? {};
+    const requester = this.requesterFor(msg, proxy);
     const match = this.rules.match(tool);
 
     if (match.action === "auto") {
@@ -188,7 +206,7 @@ export class ToolGate implements Interceptor {
     }
 
     if (match.action === "deny") {
-      this.receipt(proxy, { tool, args, decision: "denied", rule: match.rule });
+      this.receipt(proxy, { tool, args, requester, decision: "denied", rule: match.rule });
       await proxy.respondToolError(msg.id, `daemonsudo: '${tool}' denied by rule '${match.rule}'`);
       return;
     }
@@ -199,7 +217,7 @@ export class ToolGate implements Interceptor {
         msg.id,
         `daemonsudo: '${tool}' requires approval (rule '${match.rule}') but no approval channel is available — failing closed`,
       );
-      this.receipt(proxy, { tool, args, decision: "denied", rule: match.rule });
+      this.receipt(proxy, { tool, args, requester, decision: "denied", rule: match.rule });
       return;
     }
 
@@ -241,6 +259,7 @@ export class ToolGate implements Interceptor {
       this.receipt(proxy, {
         tool,
         args,
+        requester,
         decision: decision.status === "timeout" ? "timeout" : "denied",
         rule: match.rule,
         approver:
@@ -275,6 +294,7 @@ export class ToolGate implements Interceptor {
         server: proxy.serverName,
         tool,
         args,
+        requester: this.requesterFor(msg, proxy),
         decision,
         rule,
         approver,
@@ -296,6 +316,7 @@ export class ToolGate implements Interceptor {
     input: {
       tool: string;
       args: unknown;
+      requester: Requester;
       decision: "denied" | "timeout";
       rule: string;
       approver?: { channel: string; user: string; latency_ms: number };

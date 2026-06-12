@@ -38,8 +38,8 @@ function dbPathFromFlags(args: string[]): string {
 
 async function cmdVerify(args: string[]): Promise<never> {
   const db = await openDb(dbPathFromFlags(args));
-  const keys = db.get<{ public_hex: string }>("SELECT public_hex FROM keys WHERE id = 1");
-  if (!keys) {
+  const keys = db.all<{ kid: string; public_hex: string }>("SELECT kid, public_hex FROM keys");
+  if (keys.length === 0) {
     const n = db.get<{ n: number }>("SELECT COUNT(*) AS n FROM receipts")?.n ?? 0;
     if (n === 0) {
       console.log("✓ empty ledger (no receipts yet)");
@@ -48,13 +48,17 @@ async function cmdVerify(args: string[]): Promise<never> {
     console.error(`✗ ${n} receipts but no signing key — cannot verify`);
     process.exit(1);
   }
-  const result = verifyChain(db, makeVerifier(keys.public_hex));
+  const verifiers = new Map(keys.map((k) => [k.kid, makeVerifier(k.public_hex)]));
+  const result = verifyChain(db, verifiers);
   if (result.ok) {
-    console.log(`✓ ${result.count} receipts verified — hash chain intact, all signatures valid`);
-    console.log(`  public key: ed25519:${keys.public_hex}`);
+    console.log(
+      `✓ ${result.count} receipts verified — hash chain intact, head checkpoint matches, all signatures valid`,
+    );
+    for (const k of keys) console.log(`  key ${k.kid}: ed25519:${k.public_hex}`);
     process.exit(0);
   }
-  console.error(`✗ chain INVALID at receipt #${result.badSeq}: ${result.error}`);
+  const where = result.badSeq === undefined ? "" : ` at receipt #${result.badSeq}`;
+  console.error(`✗ chain INVALID${where}: ${result.error}`);
   console.error(`  (${result.count} receipts total)`);
   process.exit(1);
 }
@@ -69,7 +73,7 @@ async function cmdReceipts(args: string[]): Promise<never> {
   for (const row of rows.reverse()) {
     const r = JSON.parse(row.json) as Receipt;
     const who = r.approver ? ` by ${r.approver.channel}:${r.approver.user}` : "";
-    console.log(`${r.ts}  ${r.decision.padEnd(8)} ${r.tool}  [${r.rule}]${who}  ${r.id}`);
+    console.log(`#${String(r.seq).padEnd(5)} ${r.ts}  ${r.decision.padEnd(8)} ${r.tool}  [${r.rule}]${who}  ${r.id}`);
   }
   process.exit(0);
 }
@@ -105,7 +109,7 @@ async function main(): Promise<void> {
       /* best effort */
     }
   });
-  const ledger = new Ledger(db, config.redact, makeSigner(loadOrCreateKeys(db)));
+  const ledger = new Ledger(db, config.redact, makeSigner(loadOrCreateKeys(db)), config.gateHash);
   const rules = new YamlGlobEngine(config.rules, config.defaults);
   const broker = new ApprovalBroker(db, config.timeoutMs);
   const interceptor = new ToolGate(rules, ledger, broker);
