@@ -1,0 +1,12 @@
+# deploy: npx wrangler deploy (from this directory, after wrangler login)
+name = "daemonsudo-dev"
+main = "worker.js"
+compatibility_date = "2026-06-01"
+
+# custom_domain provisions the DNS record + cert on the zone automatically
+routes = [{ pattern = "daemonsudo.dev", custom_domain = true }]
+
+# weekly-active-gates metric (GATE-PLAN §9) — one data point per opt-in ping
+[[analytics_engine_datasets]]
+binding = "PINGS"
+dataset = "daemonsudo_pings"
