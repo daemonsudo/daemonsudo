@@ -6,7 +6,11 @@
  *   daemonsudo verify [--db path]                            verify the receipt chain
  *   daemonsudo receipts [--db path]                          print recent receipts
  */
-import { GateProxy } from "./proxy.js";
+import { defaultDbPath, loadConfig } from "./config.js";
+import { openDb } from "./db.js";
+import { Ledger } from "./ledger.js";
+import { GateProxy, ToolGate } from "./proxy.js";
+import { YamlGlobEngine } from "./rules.js";
 
 function usage(): never {
   console.error(
@@ -35,10 +39,15 @@ async function main(): Promise<void> {
   }
   const cmd = argv.slice(i);
   if (cmd.length === 0) usage();
-  void configPath; // wired up with the rules engine
+  const config = loadConfig(configPath);
+  const db = await openDb(defaultDbPath());
+  const ledger = new Ledger(db, config.redact);
+  const rules = new YamlGlobEngine(config.rules, config.defaults);
+  const interceptor = new ToolGate(rules, ledger);
 
-  const proxy = new GateProxy({ command: cmd[0], args: cmd.slice(1) });
+  const proxy = new GateProxy({ command: cmd[0], args: cmd.slice(1), interceptor });
   await proxy.start();
+  console.error(`daemonsudo: gating '${cmd.join(" ")}' (${config.rules.length} rules, defaults: ${config.defaults})`);
 }
 
 main().catch((e: unknown) => {

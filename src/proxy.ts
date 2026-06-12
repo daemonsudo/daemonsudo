@@ -9,6 +9,9 @@
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
+import type { ApprovalBroker } from "./broker.js";
+import { canonicalJson, sha256, type Ledger } from "./ledger.js";
+import type { RuleEngine } from "./rules.js";
 
 export interface ToolCallRequest {
   jsonrpc: "2.0";
@@ -64,11 +67,19 @@ export class GateProxy {
     this.parent.onerror = (e) => console.error("daemonsudo: client transport error:", e.message);
     // Downstream died → we are useless; client hangup → take downstream with us.
     this.child.onclose = () => process.exit(0);
-    this.parent.onclose = () => {
-      void this.child.close().finally(() => process.exit(0));
-    };
+    this.parent.onclose = () => this.shutdown();
+    process.stdin.once("end", () => this.shutdown());
+    process.stdin.once("close", () => this.shutdown());
+    process.once("SIGTERM", () => this.shutdown());
+    process.once("SIGINT", () => this.shutdown());
     await this.child.start();
     await this.parent.start();
+  }
+
+  /** Exit deterministically even if closing the child hangs. */
+  private shutdown(): void {
+    void this.child.close().catch(() => {});
+    setTimeout(() => process.exit(0), 300);
   }
 
   private onClientMessage(m: JSONRPCMessage): void {
@@ -140,5 +151,160 @@ export class GateProxy {
       method: "notifications/progress",
       params: { progressToken: token, progress, message },
     } as unknown as JSONRPCMessage);
+  }
+}
+
+const PROGRESS_INTERVAL_MS = 15_000;
+
+/**
+ * The decision flow for intercepted tools/call requests:
+ * auto → forward + receipt · deny → block + receipt · approve → park with the
+ * broker, hold the request open, then execute or block per the decision.
+ */
+export class ToolGate implements Interceptor {
+  /** pending approval id → JSON-RPC request id of the parked call */
+  private parked = new Map<string | number, string>();
+
+  constructor(
+    private rules: RuleEngine,
+    private ledger: Ledger,
+    private broker?: ApprovalBroker,
+  ) {}
+
+  handleCancelled(requestId: string | number): boolean {
+    const pendingId = this.parked.get(requestId);
+    if (pendingId === undefined || !this.broker) return false;
+    this.broker.cancel(pendingId, "cancelled by client");
+    return true; // we never forwarded the request, so swallow the cancellation
+  }
+
+  async handleToolCall(msg: ToolCallRequest, proxy: GateProxy): Promise<void> {
+    const tool = msg.params.name;
+    const args = msg.params.arguments ?? {};
+    const match = this.rules.match(tool);
+
+    if (match.action === "auto") {
+      return this.execute(msg, proxy, "auto", match.rule);
+    }
+
+    if (match.action === "deny") {
+      this.receipt(proxy, { tool, args, decision: "denied", rule: match.rule });
+      await proxy.respondToolError(msg.id, `daemonsudo: '${tool}' denied by rule '${match.rule}'`);
+      return;
+    }
+
+    // approve — fail closed when no broker can park the call
+    if (!this.broker) {
+      await proxy.respondToolError(
+        msg.id,
+        `daemonsudo: '${tool}' requires approval (rule '${match.rule}') but no approval channel is available — failing closed`,
+      );
+      this.receipt(proxy, { tool, args, decision: "denied", rule: match.rule });
+      return;
+    }
+
+    const parkedAt = Date.now();
+    const parked = this.broker.park({
+      server: proxy.serverName,
+      tool,
+      args,
+      rule: match.rule,
+    });
+    this.parked.set(msg.id, parked.id);
+
+    // Hold the MCP request open; heartbeat progress so clients with
+    // resetTimeoutOnProgress don't give up while a human decides.
+    const progressToken = msg.params._meta?.progressToken;
+    let beats = 0;
+    const heartbeat = progressToken === undefined
+      ? undefined
+      : setInterval(() => {
+          void proxy
+            .sendProgress(progressToken, ++beats, `daemonsudo: waiting for approval of '${tool}'`)
+            .catch(() => {});
+        }, PROGRESS_INTERVAL_MS);
+
+    try {
+      const decision = await parked.decision;
+      if (decision.status === "approved") {
+        const approver = {
+          channel: decision.channel ?? "unknown",
+          user: decision.user ?? "unknown",
+          latency_ms: Date.now() - parkedAt,
+        };
+        return await this.execute(msg, proxy, "approved", match.rule, approver);
+      }
+      const why =
+        decision.status === "timeout"
+          ? `approval timed out after ${Math.round((Date.now() - parkedAt) / 1000)}s`
+          : `denied by ${decision.user ?? "approver"} via ${decision.channel ?? "channel"}${decision.reason ? ` (${decision.reason})` : ""}`;
+      this.receipt(proxy, {
+        tool,
+        args,
+        decision: decision.status === "timeout" ? "timeout" : "denied",
+        rule: match.rule,
+        approver:
+          decision.status === "denied" && decision.channel
+            ? { channel: decision.channel, user: decision.user ?? "unknown", latency_ms: Date.now() - parkedAt }
+            : undefined,
+      });
+      await proxy.respondToolError(msg.id, `daemonsudo: '${tool}' not executed — ${why}`);
+    } finally {
+      if (heartbeat) clearInterval(heartbeat);
+      this.parked.delete(msg.id);
+    }
+  }
+
+  /** Forward to the downstream server, relay the response, write the receipt. */
+  private async execute(
+    msg: ToolCallRequest,
+    proxy: GateProxy,
+    decision: "auto" | "approved",
+    rule: string,
+    approver?: { channel: string; user: string; latency_ms: number },
+  ): Promise<void> {
+    const tool = msg.params.name;
+    const args = msg.params.arguments ?? {};
+    const response = (await proxy.forwardToChild(msg)) as {
+      result?: { isError?: boolean };
+      error?: unknown;
+    };
+    const failed = response.error !== undefined || response.result?.isError === true;
+    try {
+      this.ledger.append({
+        server: proxy.serverName,
+        tool,
+        args,
+        decision,
+        rule,
+        approver,
+        result: {
+          status: failed ? "error" : "ok",
+          content_hash: sha256(canonicalJson(response.result ?? response.error ?? null)),
+        },
+      });
+    } catch (e) {
+      // The call already executed; a receipt failure here is logged loudly but
+      // must not turn a true result into a lie.
+      console.error("daemonsudo: receipt write failed:", e instanceof Error ? e.message : e);
+    }
+    await proxy.sendToClient(response as unknown as JSONRPCMessage);
+  }
+
+  private receipt(
+    proxy: GateProxy,
+    input: {
+      tool: string;
+      args: unknown;
+      decision: "denied" | "timeout";
+      rule: string;
+      approver?: { channel: string; user: string; latency_ms: number };
+    },
+  ): void {
+    try {
+      this.ledger.append({ server: proxy.serverName, ...input });
+    } catch (e) {
+      console.error("daemonsudo: receipt write failed:", e instanceof Error ? e.message : e);
+    }
   }
 }

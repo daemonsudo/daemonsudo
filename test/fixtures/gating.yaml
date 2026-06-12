@@ -1,0 +1,9 @@
+# auto/deny stage fixture: no approval channels are configured, so any
+# approve-matched call must fail closed.
+defaults: approve
+timeout: 5s
+rules:
+  read_*: auto
+  drop_*: deny
+redact:
+  - "*.password"

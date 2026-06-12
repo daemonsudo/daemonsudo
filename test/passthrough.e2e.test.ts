@@ -2,12 +2,16 @@
 // identically with the gate inserted — same server info, same tool list,
 // same tool results, pings work.
 import { describe, expect, test } from "bun:test";
-import { connectDirect, connectThroughGate } from "./helpers.js";
+import { join } from "node:path";
+import { connectDirect, connectThroughGate, ROOT, tmpDir } from "./helpers.js";
 
 describe("transparent passthrough", () => {
   test("client sees the same server through the gate", async () => {
     const direct = await connectDirect();
-    const gated = await connectThroughGate();
+    const gated = await connectThroughGate({
+      config: join(ROOT, "test", "fixtures", "auto.yaml"),
+      env: { DAEMONSUDO_DB: join(tmpDir(), "gate.db") },
+    });
 
     expect(gated.getServerVersion()?.name).toBe(direct.getServerVersion()?.name);
 
