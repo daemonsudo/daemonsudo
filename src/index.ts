@@ -7,6 +7,7 @@
  *   daemonsudo receipts [--db path]                          print recent receipts
  */
 import { ApprovalBroker } from "./broker.js";
+import { TelegramChannel } from "./channels/telegram.js";
 import { defaultDbPath, loadConfig } from "./config.js";
 import { openDb, type Db } from "./db.js";
 import {
@@ -100,7 +101,25 @@ async function main(): Promise<void> {
   const broker = new ApprovalBroker(db, config.timeoutMs);
   const interceptor = new ToolGate(rules, ledger, broker);
 
-  await startWeb(broker, ledger, config);
+  const web = await startWeb(broker, ledger, config);
+
+  if (config.telegram) {
+    const token = process.env[config.telegram.tokenEnv];
+    if (!token) {
+      console.error(
+        `daemonsudo: telegram configured but ${config.telegram.tokenEnv} is not set — telegram channel disabled`,
+      );
+    } else if (config.telegram.allowedUsers.length === 0) {
+      console.error("daemonsudo: telegram configured without allowed_users — telegram channel disabled");
+    } else {
+      new TelegramChannel({
+        token,
+        allowedUsers: config.telegram.allowedUsers,
+        broker,
+        webBaseUrl: web?.baseUrl,
+      }).start();
+    }
+  }
 
   const proxy = new GateProxy({ command: cmd[0], args: cmd.slice(1), interceptor });
   await proxy.start();

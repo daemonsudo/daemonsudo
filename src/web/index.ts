@@ -128,7 +128,8 @@ export function createWebApp(broker: ApprovalBroker, ledger: Ledger): Hono {
           : "—";
         return `<tr>
 <td class="muted">${escapeHtml(r.ts)}</td>
-<td><strong>${escapeHtml(r.tool)}</strong><br><span class="muted">${escapeHtml(r.server)}</span></td>
+<td><strong>${escapeHtml(r.tool)}</strong><br><span class="muted">${escapeHtml(r.server)}</span>
+<details><summary class="muted">args</summary><pre>${escapeHtml(renderArgs(r.args_redacted, 1000))}</pre></details></td>
 <td class="decision-${escapeHtml(r.decision)}">${escapeHtml(r.decision)}</td>
 <td class="muted">${escapeHtml(r.rule)}</td>
 <td>${approver}</td>
