@@ -67,15 +67,17 @@ Telegram setup: make a bot with [@BotFather](https://t.me/botfather), put the to
 
 ## auth.log, but signed
 
-Every executed *and* refused call appends a receipt: what ran, who asked, who approved (and how slowly), what came back. Receipts are canonical JSON, SHA-256 hash-chained, and ed25519-signed with a key generated on first run.
+Every executed *and* refused call appends a receipt (`schema: "daemonsudo/v1"`): what ran, who asked (`requester` — MCP client, session, call id), who approved (and how slowly), which policy was in force (`gate_hash` — sha256 of your gate.yaml), and what came back. Receipts are [RFC 8785 (JCS)](https://www.rfc-editor.org/rfc/rfc8785) canonical JSON, SHA-256 hash-chained (`chain_id` + monotonic `seq`), and ed25519-signed with a key generated on first run — each receipt names its key by fingerprint (`kid`), so verification survives key rotation.
 
 ```bash
 daemonsudo receipts          # recent ledger, newest last
 daemonsudo verify            # walk the chain offline
-# ✓ 1240 receipts verified — hash chain intact, all signatures valid
+# ✓ 1240 receipts verified — hash chain intact, head checkpoint matches, all signatures valid
 ```
 
-Edit one byte of history — flip a `denied` to `approved`, delete a row — and `verify` names the exact receipt that breaks. Secrets matched by `redact` globs never enter the ledger raw; the full args are stored only as a hash, so you can still attest *what* was authorized without storing *it*.
+Edit one byte of history — flip a `denied` to `approved`, delete a row — and `verify` names the exact receipt that breaks. Deleting the *newest* receipts doesn't break `prev_hash`, so every append also rewrites a signed head checkpoint; chop the tail and `verify` reports the truncation. Secrets matched by `redact` globs never enter the ledger raw; the full args are stored only as a hash, so you can still attest *what* was authorized without storing *it*.
+
+How the fields map to the draft [Agent Receipt Protocol](https://agentreceipts.ai): [docs/crosswalk.md](docs/crosswalk.md).
 
 Browse it at `http://127.0.0.1:4910/receipts`.
 
