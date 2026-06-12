@@ -1,0 +1,51 @@
+{
+  "name": "daemonsudo",
+  "version": "0.1.0",
+  "description": "sudo for AI agents — approval gates + signed receipts for MCP tool calls",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "daemonsudo": "dist/index.js",
+    "dsudo": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "gate.schema.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "bun test",
+    "dev": "bun src/index.ts -- node examples/mock-server.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/daemonsudo/daemonsudo.git"
+  },
+  "homepage": "https://daemonsudo.dev",
+  "keywords": [
+    "mcp",
+    "approval",
+    "audit",
+    "receipts",
+    "ai-agents",
+    "human-in-the-loop",
+    "sudo"
+  ],
+  "dependencies": {
+    "@hono/node-server": "^2.0.4",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@noble/ed25519": "^3.1.0",
+    "hono": "^4.12.25",
+    "ulid": "^3.0.2",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}
