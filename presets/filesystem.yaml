@@ -1,0 +1,30 @@
+# daemonsudo preset: filesystem
+# Curated for the official filesystem MCP server. Reading and listing are
+# auto; anything that changes bytes on disk knocks.
+
+defaults: approve
+timeout: 10m
+
+rules:
+  # read-only: pass through (still receipted)
+  read_*: auto
+  list_*: auto
+  search_*: auto
+  get_*: auto
+  directory_tree: auto
+  # mutations: a human says yes
+  write_file: approve
+  edit_file: approve
+  create_directory: approve
+  move_file: approve           # can overwrite the destination
+  delete_*: approve
+
+redact:
+  - "*.password"
+  - "*.api_key"
+  - "*.token"
+  - "*.secret"
+
+channels:
+  web:
+    port: 4910

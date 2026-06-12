@@ -3,9 +3,13 @@
  * daemonsudo — sudo for AI agents.
  *
  *   daemonsudo [--config gate.yaml] -- <command> [args...]   run the gate
+ *   daemonsudo init [--preset <name>]                        write a starter gate.yaml
  *   daemonsudo verify [--db path]                            verify the receipt chain
  *   daemonsudo receipts [--db path]                          print recent receipts
  */
+import { copyFileSync, existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { ApprovalBroker } from "./broker.js";
 import { TelegramChannel } from "./channels/telegram.js";
 import { defaultDbPath, loadConfig } from "./config.js";
@@ -20,15 +24,53 @@ import {
 } from "./ledger.js";
 import { GateProxy, ToolGate } from "./proxy.js";
 import { YamlGlobEngine } from "./rules.js";
+import { maybeSendTelemetryPing } from "./telemetry.js";
 import { startWeb } from "./web/index.js";
+
+const PRESETS_DIR = fileURLToPath(new URL("../presets/", import.meta.url));
+
+function presetNames(): string[] {
+  try {
+    return readdirSync(PRESETS_DIR)
+      .filter((f) => f.endsWith(".yaml"))
+      .map((f) => f.slice(0, -".yaml".length))
+      .filter((n) => n !== "default")
+      .sort();
+  } catch {
+    return [];
+  }
+}
 
 function usage(): never {
   console.error(
     "usage: daemonsudo [--config gate.yaml] -- <command> [args...]\n" +
+      `       daemonsudo init [--preset ${presetNames().join("|")}]\n` +
       "       daemonsudo verify [--db path]\n" +
       "       daemonsudo receipts [--db path]",
   );
   process.exit(2);
+}
+
+function cmdInit(args: string[]): never {
+  const i = args.indexOf("--preset");
+  const preset = i === -1 ? undefined : args[i + 1];
+  if (i !== -1 && !preset) usage();
+  const available = presetNames();
+  if (preset && !available.includes(preset)) {
+    console.error(`daemonsudo: unknown preset '${preset}' (available: ${available.join(", ")})`);
+    process.exit(2);
+  }
+  const target = join(process.cwd(), "gate.yaml");
+  if (existsSync(target)) {
+    console.error("daemonsudo: gate.yaml already exists here — move it aside first");
+    process.exit(1);
+  }
+  copyFileSync(join(PRESETS_DIR, `${preset ?? "default"}.yaml`), target);
+  console.log(
+    `wrote gate.yaml${preset ? ` (preset: ${preset})` : ""} — edit the rules, then wrap your server:\n` +
+      "  daemonsudo --config gate.yaml -- <your mcp server command>",
+  );
+  process.exit(0);
 }
 
 function dbPathFromFlags(args: string[]): string {
@@ -80,6 +122,7 @@ async function cmdReceipts(args: string[]): Promise<never> {
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
+  if (argv[0] === "init") return cmdInit(argv.slice(1));
   if (argv[0] === "verify") return cmdVerify(argv.slice(1));
   if (argv[0] === "receipts") return cmdReceipts(argv.slice(1));
 
@@ -109,6 +152,7 @@ async function main(): Promise<void> {
       /* best effort */
     }
   });
+  maybeSendTelemetryPing(db, config.telemetry);
   const ledger = new Ledger(db, config.redact, makeSigner(loadOrCreateKeys(db)), config.gateHash);
   const rules = new YamlGlobEngine(config.rules, config.defaults);
   const broker = new ApprovalBroker(db, config.timeoutMs);

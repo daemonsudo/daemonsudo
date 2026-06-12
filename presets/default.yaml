@@ -1,0 +1,28 @@
+# gate.yaml — the sudoers file for your agents
+# Rules glob on MCP tool names: most-specific match wins, then file order.
+# Actions: auto (pass through, receipted) · approve (a human must say yes) · deny (never).
+
+defaults: approve        # unknown tools knock — safe by default
+timeout: 10m             # nobody answers → deny
+
+rules:
+  read_*: auto           # adjust to your server's tool names
+  list_*: auto
+  get_*: auto
+  delete_*: approve
+  send_*: approve
+
+redact:                  # these never land raw in receipts or approval cards
+  - "*.password"
+  - "*.api_key"
+  - "*.token"
+  - "*.secret"
+
+channels:
+  # telegram:
+  #   token_env: GATE_TELEGRAM_TOKEN   # env var NAME — the token never lives here
+  #   allowed_users: [123456789]
+  web:
+    port: 4910
+
+# telemetry: true        # opt-in weekly ping of {version, anon_id} — nothing else, ever

@@ -1,0 +1,37 @@
+# daemonsudo preset: postgres
+# Curated for common Postgres/SQL MCP servers. Rules glob on MCP *tool names*
+# (not SQL text) — list your server's tools and adjust. NOTE: `query` is auto
+# because the reference server's query tool runs read-only; if your server's
+# query tool can write, change it to approve.
+
+defaults: approve
+timeout: 10m
+
+rules:
+  # read-only: pass through (still receipted)
+  query: auto
+  read_query: auto
+  select*: auto
+  explain_*: auto
+  list_*: auto
+  describe_*: auto
+  get_*: auto
+  # writes: a human says yes
+  write_query: approve
+  execute*: approve
+  insert*: approve
+  update*: approve
+  create_*: approve
+  alter_*: approve
+  # destructive: nobody should approve these through an agent
+  drop_*: deny
+  truncate*: deny
+
+redact:
+  - "*.password"
+  - "*.connection_string"
+  - "*.dsn"
+
+channels:
+  web:
+    port: 4910

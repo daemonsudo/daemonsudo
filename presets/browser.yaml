@@ -1,0 +1,35 @@
+# daemonsudo preset: browser
+# Curated for Playwright/Puppeteer-style browser MCP servers (tools named
+# browser_* or puppeteer_*). Looking is auto; clicking, typing, and running
+# JS can submit forms, send messages, or buy things — those knock.
+
+defaults: approve
+timeout: 10m
+
+rules:
+  # observation: pass through (still receipted)
+  "*snapshot*": auto
+  "*screenshot*": auto
+  "*navigate*": auto
+  get_*: auto
+  read_*: auto
+  list_*: auto
+  # interaction: a human says yes
+  "*click*": approve
+  "*type*": approve
+  "*fill*": approve
+  "*press*": approve
+  "*select*": approve
+  "*hover*": approve
+  "*drag*": approve
+  "*upload*": approve
+  "*evaluate*": approve        # arbitrary JS in the page
+
+redact:
+  - "*.password"
+  - "*.token"
+  - "*.secret"
+
+channels:
+  web:
+    port: 4910

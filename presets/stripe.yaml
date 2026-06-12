@@ -1,0 +1,30 @@
+# daemonsudo preset: stripe
+# Curated for the Stripe Agent Toolkit MCP server. Looking at money is auto;
+# moving or creating it knocks.
+
+defaults: approve
+timeout: 10m
+
+rules:
+  # read-only: pass through (still receipted)
+  list_*: auto
+  get_*: auto
+  retrieve_*: auto
+  search_*: auto
+  # money movement & object creation: a human says yes
+  create_*: approve            # customers, payment links, invoices, refunds…
+  update_*: approve
+  finalize_*: approve
+  cancel_*: approve
+  # destructive
+  delete_*: deny
+
+redact:
+  - "*.api_key"
+  - "*.secret"
+  - "*.card"
+  - "*.number"
+
+channels:
+  web:
+    port: 4910

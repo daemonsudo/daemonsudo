@@ -1,0 +1,31 @@
+# daemonsudo preset: github
+# Curated for the official GitHub MCP server. Reading is free; anything that
+# writes to a repo, issue, or PR knocks; repo-level deletion is off the table.
+
+defaults: approve
+timeout: 10m
+
+rules:
+  # read-only: pass through (still receipted)
+  get_*: auto
+  list_*: auto
+  search_*: auto
+  # writes: branches, files, issues, PRs, comments
+  create_*: approve
+  update_*: approve
+  add_*: approve
+  push_*: approve
+  fork_repository: approve
+  merge_pull_request: approve
+  delete_file: approve         # a file delete is reviewable...
+  # destructive
+  delete_*: deny               # ...deleting repos/releases through an agent is not
+
+redact:
+  - "*.token"
+  - "*.password"
+  - "*.secret"
+
+channels:
+  web:
+    port: 4910

@@ -10,6 +10,7 @@
   },
   "files": [
     "dist",
+    "presets",
     "gate.schema.json",
     "README.md",
     "LICENSE"
