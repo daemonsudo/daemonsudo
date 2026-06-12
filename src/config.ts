@@ -26,6 +26,8 @@ export interface GateConfig {
   };
   /** sha256 of the gate.yaml bytes in force — stamped on every receipt */
   gateHash: string;
+  /** opt-in weekly ping of {version, anon_id} — default off */
+  telemetry: boolean;
 }
 
 const ACTIONS: Action[] = ["auto", "approve", "deny"];
@@ -93,5 +95,6 @@ export function loadConfig(path?: string): GateConfig {
       port: web.port === undefined ? 4910 : Number(web.port),
     },
     gateHash,
+    telemetry: raw.telemetry === true,
   };
 }
