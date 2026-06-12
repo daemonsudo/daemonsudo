@@ -8,8 +8,15 @@
  */
 import { ApprovalBroker } from "./broker.js";
 import { defaultDbPath, loadConfig } from "./config.js";
-import { openDb } from "./db.js";
-import { Ledger } from "./ledger.js";
+import { openDb, type Db } from "./db.js";
+import {
+  Ledger,
+  loadOrCreateKeys,
+  makeSigner,
+  makeVerifier,
+  verifyChain,
+  type Receipt,
+} from "./ledger.js";
 import { GateProxy, ToolGate } from "./proxy.js";
 import { YamlGlobEngine } from "./rules.js";
 import { startWeb } from "./web/index.js";
@@ -23,8 +30,53 @@ function usage(): never {
   process.exit(2);
 }
 
+function dbPathFromFlags(args: string[]): string {
+  const i = args.indexOf("--db");
+  return i !== -1 && args[i + 1] ? args[i + 1] : defaultDbPath();
+}
+
+async function cmdVerify(args: string[]): Promise<never> {
+  const db = await openDb(dbPathFromFlags(args));
+  const keys = db.get<{ public_hex: string }>("SELECT public_hex FROM keys WHERE id = 1");
+  if (!keys) {
+    const n = db.get<{ n: number }>("SELECT COUNT(*) AS n FROM receipts")?.n ?? 0;
+    if (n === 0) {
+      console.log("✓ empty ledger (no receipts yet)");
+      process.exit(0);
+    }
+    console.error(`✗ ${n} receipts but no signing key — cannot verify`);
+    process.exit(1);
+  }
+  const result = verifyChain(db, makeVerifier(keys.public_hex));
+  if (result.ok) {
+    console.log(`✓ ${result.count} receipts verified — hash chain intact, all signatures valid`);
+    console.log(`  public key: ed25519:${keys.public_hex}`);
+    process.exit(0);
+  }
+  console.error(`✗ chain INVALID at receipt #${result.badSeq}: ${result.error}`);
+  console.error(`  (${result.count} receipts total)`);
+  process.exit(1);
+}
+
+async function cmdReceipts(args: string[]): Promise<never> {
+  const db: Db = await openDb(dbPathFromFlags(args));
+  const rows = db.all<{ json: string }>("SELECT json FROM receipts ORDER BY seq DESC LIMIT 50");
+  if (rows.length === 0) {
+    console.log("no receipts yet.");
+    process.exit(0);
+  }
+  for (const row of rows.reverse()) {
+    const r = JSON.parse(row.json) as Receipt;
+    const who = r.approver ? ` by ${r.approver.channel}:${r.approver.user}` : "";
+    console.log(`${r.ts}  ${r.decision.padEnd(8)} ${r.tool}  [${r.rule}]${who}  ${r.id}`);
+  }
+  process.exit(0);
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
+  if (argv[0] === "verify") return cmdVerify(argv.slice(1));
+  if (argv[0] === "receipts") return cmdReceipts(argv.slice(1));
 
   // Flags end at `--` or at the first token that isn't a flag (some runners,
   // e.g. bun, swallow the `--` separator).
@@ -43,7 +95,7 @@ async function main(): Promise<void> {
   if (cmd.length === 0) usage();
   const config = loadConfig(configPath);
   const db = await openDb(defaultDbPath());
-  const ledger = new Ledger(db, config.redact);
+  const ledger = new Ledger(db, config.redact, makeSigner(loadOrCreateKeys(db)));
   const rules = new YamlGlobEngine(config.rules, config.defaults);
   const broker = new ApprovalBroker(db, config.timeoutMs);
   const interceptor = new ToolGate(rules, ledger, broker);

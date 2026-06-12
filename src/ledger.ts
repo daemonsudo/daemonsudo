@@ -4,9 +4,15 @@
  * the full stored JSON of the previous one. Signatures cover the canonical
  * JSON of the receipt minus its `sig` field.
  */
+import * as ed from "@noble/ed25519";
 import { createHash } from "node:crypto";
 import { ulid } from "ulid";
 import type { Db } from "./db.js";
+
+// noble v3 needs a sha512 implementation for the sync API; node:crypto's
+// works on both Node and Bun with no extra dependency.
+ed.hashes.sha512 = (msg: Uint8Array) =>
+  new Uint8Array(createHash("sha512").update(msg).digest());
 
 export type Decision = "auto" | "approved" | "denied" | "timeout" | "error";
 
@@ -46,6 +52,54 @@ export interface Signer {
 }
 
 const GENESIS = "daemonsudo-genesis";
+
+export interface KeyPair {
+  secretHex: string;
+  publicHex: string;
+}
+
+/** Signing key: generated on first run, stored in the db, exportable. */
+export function loadOrCreateKeys(db: Db): KeyPair {
+  const row = db.get<{ secret_hex: string; public_hex: string }>(
+    "SELECT secret_hex, public_hex FROM keys WHERE id = 1",
+  );
+  if (row) return { secretHex: row.secret_hex, publicHex: row.public_hex };
+  const { secretKey, publicKey } = ed.keygen();
+  const pair = {
+    secretHex: Buffer.from(secretKey).toString("hex"),
+    publicHex: Buffer.from(publicKey).toString("hex"),
+  };
+  db.run("INSERT INTO keys (id, secret_hex, public_hex, created_at) VALUES (1, ?, ?, ?)", [
+    pair.secretHex,
+    pair.publicHex,
+    new Date().toISOString(),
+  ]);
+  return pair;
+}
+
+export function makeSigner(keys: KeyPair): Signer {
+  const secret = Buffer.from(keys.secretHex, "hex");
+  return {
+    sign: (payload) =>
+      `ed25519:${Buffer.from(ed.sign(Buffer.from(payload, "utf8"), secret)).toString("hex")}`,
+  };
+}
+
+export function makeVerifier(publicHex: string): (payload: string, sig: string) => boolean {
+  const pub = Buffer.from(publicHex, "hex");
+  return (payload, sig) => {
+    if (!sig.startsWith("ed25519:")) return false;
+    try {
+      return ed.verify(
+        Buffer.from(sig.slice("ed25519:".length), "hex"),
+        Buffer.from(payload, "utf8"),
+        pub,
+      );
+    } catch {
+      return false;
+    }
+  };
+}
 
 /** Deterministic JSON: object keys sorted recursively, no whitespace. */
 export function canonicalJson(value: unknown): string {
