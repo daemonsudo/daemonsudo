@@ -1,2 +1,5 @@
 # everything auto — used by the transparent-passthrough exit test
 defaults: auto
+channels:
+  web:
+    port: 14909

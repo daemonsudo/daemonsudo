@@ -6,11 +6,13 @@
  *   daemonsudo verify [--db path]                            verify the receipt chain
  *   daemonsudo receipts [--db path]                          print recent receipts
  */
+import { ApprovalBroker } from "./broker.js";
 import { defaultDbPath, loadConfig } from "./config.js";
 import { openDb } from "./db.js";
 import { Ledger } from "./ledger.js";
 import { GateProxy, ToolGate } from "./proxy.js";
 import { YamlGlobEngine } from "./rules.js";
+import { startWeb } from "./web/index.js";
 
 function usage(): never {
   console.error(
@@ -43,7 +45,10 @@ async function main(): Promise<void> {
   const db = await openDb(defaultDbPath());
   const ledger = new Ledger(db, config.redact);
   const rules = new YamlGlobEngine(config.rules, config.defaults);
-  const interceptor = new ToolGate(rules, ledger);
+  const broker = new ApprovalBroker(db, config.timeoutMs);
+  const interceptor = new ToolGate(rules, ledger, broker);
+
+  await startWeb(broker, ledger, config);
 
   const proxy = new GateProxy({ command: cmd[0], args: cmd.slice(1), interceptor });
   await proxy.start();

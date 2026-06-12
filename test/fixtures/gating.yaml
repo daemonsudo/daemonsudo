@@ -1,9 +1,12 @@
-# auto/deny stage fixture: no approval channels are configured, so any
-# approve-matched call must fail closed.
+# auto/deny stage fixture; the approve path has no approver in tests, so it
+# parks and times out quickly.
 defaults: approve
-timeout: 5s
+timeout: 1500ms
 rules:
   read_*: auto
   drop_*: deny
 redact:
   - "*.password"
+channels:
+  web:
+    port: 14910

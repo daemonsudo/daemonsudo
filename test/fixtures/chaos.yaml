@@ -1,0 +1,7 @@
+defaults: auto
+timeout: 60s
+rules:
+  delete_*: approve
+channels:
+  web:
+    port: 14913

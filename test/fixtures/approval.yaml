@@ -1,0 +1,10 @@
+defaults: auto
+timeout: 60s
+rules:
+  delete_*: approve
+  send_*: approve
+redact:
+  - "*.password"
+channels:
+  web:
+    port: 14911

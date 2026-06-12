@@ -31,13 +31,13 @@ describe("rule-gated calls", () => {
     expect(denied.isError).toBe(true);
     expect((denied.content as Array<{ text: string }>)[0].text).toContain("drop_*: deny");
 
-    // approve-matched with no channel → fail closed
+    // approve-matched with nobody approving → parked, then denied on timeout
     const closed = await client.callTool({
       name: "send_thing",
       arguments: { id: "a1", to: "x", password: "hunter2" },
     });
     expect(closed.isError).toBe(true);
-    expect((closed.content as Array<{ text: string }>)[0].text).toContain("failing closed");
+    expect((closed.content as Array<{ text: string }>)[0].text).toContain("timed out");
 
     // only the auto call reached the mock server
     expect(readFileSync(mockLog, "utf8").trim().split("\n")).toEqual(["read_thing a1"]);
@@ -50,7 +50,7 @@ describe("rule-gated calls", () => {
     expect(receipts.map((r) => [r.tool, r.decision])).toEqual([
       ["read_thing", "auto"],
       ["drop_things", "denied"],
-      ["send_thing", "denied"],
+      ["send_thing", "timeout"],
     ]);
     expect(receipts[0].result?.status).toBe("ok");
     expect(receipts[0].server).toBe("mock-things");
