@@ -1,5 +1,8 @@
 # daemonsudo
 
+![Downloads](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/daemonsudo/daemonsudo/_gh_traffic_stats/.github/badges/downloads.json)
+![Views](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/daemonsudo/daemonsudo/_gh_traffic_stats/.github/badges/views.json)
+
 **sudo for AI agents.** Approval gates + signed receipts for MCP tool calls.
 
 Today your agent has your keys — it deletes rows, sends emails, and drops tables the instant a model decides to. daemonsudo makes it **knock first**: wrap any MCP server in one line of config, and risky tool calls pause for a human *yes* on your phone or browser, while every executed call leaves a signed, hash-chained receipt.
