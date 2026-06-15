@@ -18,3 +18,5 @@ jobs:
       - uses: gtapps/gh-traffic-stats@v1
         with:
           token: ${{ secrets.GH_TRAFFIC_STATS_TOKEN }}
+          clones-label: "Downloads"
+
