@@ -3,3 +3,4 @@ dist/
 *.tgz
 *.db
 .gate/
+.claude/scheduled_tasks.lock
