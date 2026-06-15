@@ -1,6 +1,6 @@
 # daemonsudo
 
-![Downloads](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/daemonsudo/daemonsudo/_gh_traffic_stats/.github/badges/downloads.json)
+![Downloads](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/daemonsudo/daemonsudo/_gh_traffic_stats/.github/badges/clones.json)
 ![Views](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/daemonsudo/daemonsudo/_gh_traffic_stats/.github/badges/views.json)
 
 **sudo for AI agents.** Approval gates + signed receipts for MCP tool calls.
