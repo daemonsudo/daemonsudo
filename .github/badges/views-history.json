@@ -87,8 +87,13 @@
       "timestamp": "2026-06-17T00:00:00Z",
       "count": 28,
       "uniques": 20
+    },
+    {
+      "timestamp": "2026-06-18T00:00:00Z",
+      "count": 8,
+      "uniques": 6
     }
   ],
-  "total": 190,
-  "total_uniques": 105
+  "total": 198,
+  "total_uniques": 111
 }
