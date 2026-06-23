@@ -1,0 +1,11 @@
+{
+  "name": "daemonsudo",
+  "owner": { "name": "daemonsudo", "url": "https://github.com/daemonsudo/daemonsudo" },
+  "plugins": [
+    {
+      "name": "daemonsudo",
+      "source": "./plugin",
+      "description": "sudo for AI agents — remote approval + signed receipts for Claude Code tool calls"
+    }
+  ]
+}

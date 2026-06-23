@@ -3,9 +3,9 @@
 ![Downloads](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/daemonsudo/daemonsudo/_gh_traffic_stats/.github/badges/clones.json)
 ![Views](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/daemonsudo/daemonsudo/_gh_traffic_stats/.github/badges/views.json)
 
-**sudo for AI agents.** Approval gates + signed receipts for MCP tool calls.
+**sudo for AI agents.** Approval gates + signed receipts — for MCP tool calls _and_ native Claude Code tools.
 
-Today your agent has your keys — it deletes rows, sends emails, and drops tables the instant a model decides to. daemonsudo makes it **knock first**: wrap any MCP server in one line of config, and risky tool calls pause for a human *yes* on your phone or browser, while every executed call leaves a signed, hash-chained receipt.
+Today your agent has your keys — it deletes rows, sends emails, and drops tables the instant a model decides to. daemonsudo makes it **knock first**: wrap any MCP server in one line of config, and risky tool calls pause for a human _yes_ on your phone or browser, while every executed call leaves a signed, hash-chained receipt.
 
 - `gate.yaml` is **the sudoers file for your agents**
 - the receipt ledger is **auth.log, but signed**
@@ -41,29 +41,46 @@ The gate spawns the real server as a child process and proxies its stdio. Everyt
 
 ```yaml
 # gate.yaml
-defaults: approve            # unknown tools must knock (safe-by-default)
-timeout: 10m                 # nobody answers → deny
+defaults: approve # unknown tools must knock (safe-by-default)
+timeout: 10m # nobody answers → deny
 
-rules:                       # glob on tool name → auto | approve | deny
-  read_*: auto               # boring calls pass through (and get receipts)
+rules: # glob on tool name → auto | approve | deny
+  read_*: auto # boring calls pass through (and get receipts)
   list_*: auto
-  delete_*: approve          # destructive calls wait for a human
+  delete_*: approve # destructive calls wait for a human
   send_*: approve
-  drop_*: deny               # some things nobody should approve
+  drop_*: deny # some things nobody should approve
 
-redact:                      # these never land raw in receipts or cards
+redact: # these never land raw in receipts or cards
   - "*.password"
   - "*.api_key"
 
 channels:
   telegram:
-    token_env: GATE_TELEGRAM_TOKEN   # env var NAME — the token never lives in config
-    allowed_users: [123456789]       # the only Telegram IDs that can approve
+    token_env: GATE_TELEGRAM_TOKEN # env var NAME — the token never lives in config
+    allowed_users: [123456789] # the only Telegram IDs that can approve
   web:
-    port: 4910                       # localhost approval + receipts pages
+    port: 4910 # localhost approval + receipts pages
 ```
 
 Most-specific glob wins, then file order. A JSON schema ships in the package (`gate.schema.json`) for editor autocomplete.
+
+## Gating Claude Code's own tools
+
+Everything above gates an MCP server. daemonsudo can also gate Claude Code's _native_ Bash / Edit / Write tools — no MCP involved.
+
+daemonsudo's difference: Claude's app lets you approve `ask` prompts remotely, but it keeps no record afterward. daemonsudo writes a **signed, hash-chained receipt for every executed call** — a tamper-evident `auth.log` you can verify offline, long after the session ends.
+
+Here, Claude Code's own `ask`/`deny` permission rules **are** the sudoers file: daemonsudo doesn't re-classify what's risky, it just turns each call CC would `ask` about into a remote approval on your phone and writes a signed receipt for everything that runs. The `gate.yaml` shrinks to just `channels`, `redact`, and `timeout` — the rule block above isn't used.
+
+Install the plugin — it registers the hooks and auto-starts the daemon:
+
+```bash
+claude plugin marketplace add daemonsudo/daemonsudo
+claude plugin install daemonsudo@daemonsudo
+```
+
+Or wire it up by hand: copy [`examples/claude-code-settings.json`](examples/claude-code-settings.json) (a curated `ask`-list — force-push, `rm -rf`, edits to `.github/workflows/**`, …) into your project's `.claude/settings.json` (or `~/.claude/settings.json` for all projects), then run `daemonsudo serve`. Same broker, same ledger, same `verify`.
 
 ## What an approval looks like
 
@@ -79,7 +96,7 @@ Telegram setup: make a bot with [@BotFather](https://t.me/botfather), put the to
 
 ## auth.log, but signed
 
-Every executed *and* refused call appends a receipt (`schema: "daemonsudo/v1"`): what ran, who asked (`requester` — MCP client, session, call id), who approved (and how slowly), which policy was in force (`gate_hash` — sha256 of your gate.yaml), and what came back. Receipts are [RFC 8785 (JCS)](https://www.rfc-editor.org/rfc/rfc8785) canonical JSON, SHA-256 hash-chained (`chain_id` + monotonic `seq`), and ed25519-signed with a key generated on first run — each receipt names its key by fingerprint (`kid`), so verification survives key rotation.
+Every executed _and_ refused call appends a receipt (`schema: "daemonsudo/v1"`): what ran, who asked (`requester` — MCP client, session, call id), who approved (and how slowly), which policy was in force (`gate_hash` — sha256 of your gate.yaml), and what came back. Receipts are [RFC 8785 (JCS)](https://www.rfc-editor.org/rfc/rfc8785) canonical JSON, SHA-256 hash-chained (`chain_id` + monotonic `seq`), and ed25519-signed with a key generated on first run — each receipt names its key by fingerprint (`kid`), so verification survives key rotation.
 
 ```bash
 daemonsudo receipts          # recent ledger, newest last
@@ -87,7 +104,7 @@ daemonsudo verify            # walk the chain offline
 # ✓ 1240 receipts verified — hash chain intact, head checkpoint matches, all signatures valid
 ```
 
-Edit one byte of history — flip a `denied` to `approved`, delete a row — and `verify` names the exact receipt that breaks. Deleting the *newest* receipts doesn't break `prev_hash`, so every append also rewrites a signed head checkpoint; chop the tail and `verify` reports the truncation. Secrets matched by `redact` globs never enter the ledger raw; the full args are stored only as a hash, so you can still attest *what* was authorized without storing *it*.
+Edit one byte of history — flip a `denied` to `approved`, delete a row — and `verify` names the exact receipt that breaks. Deleting the _newest_ receipts doesn't break `prev_hash`, so every append also rewrites a signed head checkpoint; chop the tail and `verify` reports the truncation. Secrets matched by `redact` globs never enter the ledger raw; the full args are stored only as a hash, so you can still attest _what_ was authorized without storing _it_.
 
 How the fields map to the draft [Agent Receipt Protocol](https://agentreceipts.ai): [docs/crosswalk.md](docs/crosswalk.md).
 
@@ -127,21 +144,19 @@ bun run build     # tsc → dist/
 daemonsudo phones home only if you put `telemetry: true` in your gate.yaml. At most once a week it POSTs exactly this to `https://daemonsudo.dev/ping`:
 
 ```json
-{ "version": "0.1.0", "anon_id": "<random hex generated locally on first ping>" }
+{
+  "version": "0.1.0",
+  "anon_id": "<random hex generated locally on first ping>"
+}
 ```
 
 That is the entire payload — nothing about your tools, rules, args, or traffic, ever. If the endpoint is unreachable the ping is dropped silently; telemetry runs fire-and-forget and can never affect gating.
-
-## v0.1 scope
-
-Approvals (web + Telegram), rules + presets, redaction, signed receipts, `verify`. Deliberately **not** here yet: dry-run previews, undo contracts, Cedar policies, Slack/Discord, Postgres, Docker, hosted anything. The local single-user flow is free forever.
 
 ## Roadmap
 
 Demand-driven — 👍 an issue to vote it up:
 
 - [Slack & Discord approval channels](https://github.com/daemonsudo/daemonsudo/issues/1)
-- [Claude Code PreToolUse hook adapter](https://github.com/daemonsudo/daemonsudo/issues/2) — gate native Bash/Edit/Write tools, not just MCP
 - [More rule presets — which servers?](https://github.com/daemonsudo/daemonsudo/issues/3)
 
 ---
