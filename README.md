@@ -102,7 +102,7 @@ Browse it at `http://127.0.0.1:4910/receipts`.
 
 ## Requirements
 
-- **Bun ≥ 1.1** or **Node ≥ 22.5** (the gate stores state in SQLite via `bun:sqlite` / `node:sqlite` — one file, `~/.gate/gate.db`, zero ops; override with `DAEMONSUDO_DB`)
+- **Bun ≥ 1.1** or **Node ≥ 24** (the gate stores state in SQLite via `bun:sqlite` / `node:sqlite` — one file, `~/.gate/gate.db`, zero ops; override with `DAEMONSUDO_DB`)
 - `dsudo` ships as a second name for the same CLI
 
 ## Try it without wiring up a real server

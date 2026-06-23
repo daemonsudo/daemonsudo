@@ -1,0 +1,76 @@
+{
+  "permissions": {
+    "ask": [
+      "Bash(git push --force*)",
+      "Bash(git reset --hard*)",
+      "Bash(git clean -fd*)",
+      "Bash(rm -rf*)",
+      "Bash(rm -fr*)",
+      "Bash(kubectl delete*)",
+      "Bash(terraform apply*)",
+      "Bash(terraform destroy*)",
+      "Bash(docker system prune*)",
+      "Bash(npm publish*)",
+      "Bash(pnpm publish*)",
+      "Bash(yarn publish*)",
+      "Bash(bun publish*)",
+      "Bash(gh release create*)",
+      "Bash(docker push*)",
+      "Edit(.claude/settings.json)",
+      "Edit(.claude/settings.local.json)",
+      "Edit(~/.claude/**)",
+      "Write(~/.claude/**)",
+      "Edit(.github/workflows/**)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "daemonsudo hook --ensure-daemon",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "Bash|Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "daemonsudo hook",
+            "timeout": 600
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "daemonsudo hook",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash|Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "daemonsudo hook",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -13,15 +13,24 @@ const cli = (cwd: string, ...args: string[]) =>
   Bun.spawnSync(["bun", join(ROOT, "src", "index.ts"), ...args], { cwd });
 
 describe("presets", () => {
+  // claude-code.yaml is daemon config for the CC door — it has no MCP rules.
+  const MCP_PRESETS = PRESETS.filter((f) => f !== "claude-code.yaml");
+
   test("all presets parse and are safe by default", () => {
-    expect(PRESETS.length).toBeGreaterThanOrEqual(6); // default + 5 curated
-    for (const file of PRESETS) {
+    expect(PRESETS.length).toBeGreaterThanOrEqual(7); // default + 5 curated + claude-code
+    for (const file of MCP_PRESETS) {
       const config = loadConfig(join(ROOT, "presets", file));
       expect(config.defaults).toBe("approve");
       expect(config.rules.length).toBeGreaterThan(0);
       expect(config.redact.length).toBeGreaterThan(0);
       expect(config.telemetry).toBe(false); // opt-in only — no preset enables it
     }
+  });
+
+  test("claude-code preset is daemon config with no MCP rules", () => {
+    const config = loadConfig(join(ROOT, "presets", "claude-code.yaml"));
+    expect(config.rules.length).toBe(0);
+    expect(config.redact.length).toBeGreaterThan(0);
   });
 
   test("curated presets carry deny rules for the destructive tier", () => {
