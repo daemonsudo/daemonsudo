@@ -2,7 +2,9 @@
 /**
  * daemonsudo — sudo for AI agents.
  *
- *   daemonsudo [--config gate.yaml] -- <command> [args...]   run the gate
+ *   daemonsudo [--config gate.yaml] -- <command> [args...]   MCP gate (v0.1 door)
+ *   daemonsudo serve [--config gate.yaml]                    CC daemon (v0.2 door)
+ *   daemonsudo hook [--ensure-daemon]                        CC hook client (stdin→daemon)
  *   daemonsudo init [--preset <name>]                        write a starter gate.yaml
  *   daemonsudo verify [--db path]                            verify the receipt chain
  *   daemonsudo receipts [--db path]                          print recent receipts
@@ -44,6 +46,8 @@ function presetNames(): string[] {
 function usage(): never {
   console.error(
     "usage: daemonsudo [--config gate.yaml] -- <command> [args...]\n" +
+      "       daemonsudo serve [--config gate.yaml]\n" +
+      "       daemonsudo hook [--ensure-daemon]\n" +
       `       daemonsudo init [--preset ${presetNames().join("|")}]\n` +
       "       daemonsudo verify [--db path]\n" +
       "       daemonsudo receipts [--db path]",
@@ -52,6 +56,17 @@ function usage(): never {
 }
 
 function cmdInit(args: string[]): never {
+  // Special-case the CC plugin preset to show install instructions.
+  if (args[0] === "--preset" && args[1] === "claude-code") {
+    console.log(
+      "Install the daemonsudo Claude Code plugin to register the hooks and auto-start the daemon:\n" +
+        "  claude plugin install daemonsudo\n\n" +
+        "Or for manual installation, copy examples/claude-code-settings.json into your project's\n" +
+        ".claude/settings.json (or ~/.claude/settings.json for all projects), then run:\n" +
+        "  daemonsudo serve",
+    );
+    process.exit(0);
+  }
   const i = args.indexOf("--preset");
   const preset = i === -1 ? undefined : args[i + 1];
   if (i !== -1 && !preset) usage();
@@ -125,6 +140,19 @@ async function main(): Promise<void> {
   if (argv[0] === "init") return cmdInit(argv.slice(1));
   if (argv[0] === "verify") return cmdVerify(argv.slice(1));
   if (argv[0] === "receipts") return cmdReceipts(argv.slice(1));
+
+  // CC plugin commands — dispatch before flag parsing so they get their own argv.
+  if (argv[0] === "serve") {
+    const { runServe } = await import("./serve.js");
+    const i = argv.indexOf("--config");
+    await runServe(i !== -1 ? argv[i + 1] : undefined);
+    return;
+  }
+  if (argv[0] === "hook") {
+    const { main: hookMain } = await import("./hook.js");
+    await hookMain();
+    return;
+  }
 
   // Flags end at `--` or at the first token that isn't a flag (some runners,
   // e.g. bun, swallow the `--` separator).

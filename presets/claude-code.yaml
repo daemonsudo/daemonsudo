@@ -1,0 +1,44 @@
+# daemonsudo preset: Claude Code door (v0.2)
+#
+# This config is for `daemonsudo serve` — the persistent daemon that bridges
+# Claude Code hooks into the approval broker + signed ledger.
+#
+# IMPORTANT: daemonsudo does NOT re-decide what's risky. Claude Code already
+# classifies tool calls via its own allow/ask/deny rules and permission modes.
+# Configure what gets gated using CC's native settings:
+#
+#   .claude/settings.json (or ~/.claude/settings.json):
+#   {
+#     "permissions": {
+#       "ask": [
+#         "Bash(git push --force*)",
+#         "Bash(rm -rf *)",
+#         "Bash(kubectl delete *)"
+#       ]
+#     }
+#   }
+#
+# Calls matching an `ask` rule pause for remote approval via Telegram/web.
+# Everything that executes (including auto-approved calls) gets a signed receipt.
+
+# How long to wait for a human decision before timing out.
+timeout: 9m
+
+# Redact secrets from args before they reach the ledger or approval cards.
+redact:
+  - "*.token"
+  - "*.secret"
+  - "*.password"
+  - "*.api_key"
+  - "*.Authorization"
+
+channels:
+  web:
+    host: "127.0.0.1"   # loopback only — never expose to the network
+    port: 4910
+
+  # Uncomment to enable Telegram approval cards:
+  # telegram:
+  #   token_env: GATE_TELEGRAM_TOKEN   # export GATE_TELEGRAM_TOKEN=<your bot token>
+  #   allowed_users:
+  #     - 123456789                    # your Telegram user ID

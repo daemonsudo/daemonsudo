@@ -82,8 +82,10 @@ function pendingCard(p: PendingCall, withButtons: boolean, token?: string): stri
 ${buttons}</div>`;
 }
 
-export function createWebApp(broker: ApprovalBroker, ledger: Ledger): Hono {
+export function createWebApp(broker: ApprovalBroker, ledger: Ledger, register?: (app: Hono) => void): Hono {
   const app = new Hono();
+  // Extra routes registered before the built-in ones (e.g. /gate/* for the CC door).
+  register?.(app);
 
   app.get("/health", (c) => c.json({ ok: true }));
   app.get("/", (c) => c.redirect("/receipts"));
@@ -159,8 +161,9 @@ export async function startWeb(
   broker: ApprovalBroker,
   ledger: Ledger,
   config: GateConfig,
+  register?: (app: Hono) => void,
 ): Promise<WebChannel | undefined> {
-  const app = createWebApp(broker, ledger);
+  const app = createWebApp(broker, ledger, register);
   const { host, port } = config.web;
   const baseUrl = `http://${host}:${port}`;
   try {
@@ -169,11 +172,15 @@ export async function startWeb(
       const Bun = (globalThis as Record<string, unknown>).Bun as {
         serve(opts: unknown): { stop(): void };
       };
-      const server = Bun.serve({ hostname: host, port, fetch: app.fetch });
+      // idleTimeout:0 keeps long-held /gate/approve connections alive past Bun's default.
+      const server = Bun.serve({ hostname: host, port, fetch: app.fetch, idleTimeout: 0 });
       stop = () => server.stop();
     } else {
       const { serve } = await import("@hono/node-server");
       const server = serve({ fetch: app.fetch, hostname: host, port });
+      // Disable Node's default timeouts so /gate/approve can block for 9+ minutes.
+      (server as { requestTimeout?: number; timeout?: number }).requestTimeout = 0;
+      (server as { requestTimeout?: number; timeout?: number }).timeout = 0;
       stop = () => server.close();
     }
     broker.onPending((p) => {

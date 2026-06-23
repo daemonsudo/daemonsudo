@@ -1,7 +1,7 @@
 {
   "name": "daemonsudo",
-  "version": "0.1.0",
-  "description": "sudo for AI agents — approval gates + signed receipts for MCP tool calls",
+  "version": "0.2.0",
+  "description": "sudo for AI agents — remote approval + signed receipts for MCP and Claude Code tool calls",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -11,12 +11,14 @@
   "files": [
     "dist",
     "presets",
+    "plugin",
+    "examples",
     "gate.schema.json",
     "README.md",
     "LICENSE"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22.5"
   },
   "scripts": {
     "build": "tsc",
