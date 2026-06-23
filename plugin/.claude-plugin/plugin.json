@@ -2,5 +2,5 @@
   "name": "daemonsudo",
   "version": "0.2.0",
   "description": "sudo for AI agents — remote approval + signed receipts for Claude Code tool calls",
-  "author": { "name": "gtapps" }
+  "author": { "name": "daemonsudo", "url": "https://github.com/daemonsudo/daemonsudo" }
 }
