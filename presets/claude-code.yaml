@@ -5,20 +5,31 @@
 #
 # IMPORTANT: daemonsudo does NOT re-decide what's risky. Claude Code already
 # classifies tool calls via its own allow/ask/deny rules and permission modes.
-# Configure what gets gated using CC's native settings:
+# Configure what gets gated using CC's native settings — a curated `ask`-list in
+# .claude/settings.json (project) or ~/.claude/settings.json (all projects).
+# A ready-to-copy version lives in examples/claude-code-settings.json.
 #
-#   .claude/settings.json (or ~/.claude/settings.json):
-#   {
-#     "permissions": {
-#       "ask": [
-#         "Bash(git push --force*)",
-#         "Bash(rm -rf *)",
-#         "Bash(kubectl delete *)"
-#       ]
-#     }
-#   }
+# Gate few, high-signal operations — over-gating breeds approval fatigue:
 #
-# Calls matching an `ask` rule pause for remote approval via Telegram/web.
+#   Tier 1 — irreversible:
+#     "Bash(git push --force*)", "Bash(git reset --hard*)", "Bash(git clean -fd*)",
+#     "Bash(rm -rf*)", "Bash(kubectl delete*)", "Bash(terraform destroy*)"
+#   Tier 2 — publish / supply-chain:
+#     "Bash(npm publish*)", "Bash(gh release create*)", "Bash(docker push*)"
+#   Tier 3 — gate-escape & CI hijack (CC-specific — an agent disabling its own
+#   guardrails or planting a workflow that later runs with repo secrets):
+#     "Edit(~/.claude/**)", "Write(~/.claude/**)",
+#     "Edit(.claude/settings.json)", "Edit(.github/workflows/**)"
+#   Tier 4 (opt-in) — secret-egress reads:
+#     "Read(./.env)", "Read(./.env.*)", "Read(./**/*.pem)",
+#     "Read(~/.ssh/**)", "Read(~/.aws/**)", "Read(~/.config/gh/**)"
+#     Tier 4 only fires if the hook matches these tools: add Read|WebFetch to the
+#     PermissionRequest matcher AND to PostToolUse/PostToolUseFailure (so an
+#     approved read still gets a receipt). Noisier — reads are frequent.
+#
+# Bash patterns are best-effort prefix globs (flag reordering can slip past
+# them); a slip still executes and is still receipted — it's a tripwire, not a
+# sandbox. Calls matching an `ask` rule pause for remote approval via Telegram/web.
 # Everything that executes (including auto-approved calls) gets a signed receipt.
 
 # How long to wait for a human decision before timing out.

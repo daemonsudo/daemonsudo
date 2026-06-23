@@ -2,7 +2,25 @@
   "permissions": {
     "ask": [
       "Bash(git push --force*)",
-      "Bash(git push --force-with-lease*)"
+      "Bash(git reset --hard*)",
+      "Bash(git clean -fd*)",
+      "Bash(rm -rf*)",
+      "Bash(rm -fr*)",
+      "Bash(kubectl delete*)",
+      "Bash(terraform apply*)",
+      "Bash(terraform destroy*)",
+      "Bash(docker system prune*)",
+      "Bash(npm publish*)",
+      "Bash(pnpm publish*)",
+      "Bash(yarn publish*)",
+      "Bash(bun publish*)",
+      "Bash(gh release create*)",
+      "Bash(docker push*)",
+      "Edit(.claude/settings.json)",
+      "Edit(.claude/settings.local.json)",
+      "Edit(~/.claude/**)",
+      "Write(~/.claude/**)",
+      "Edit(.github/workflows/**)"
     ]
   },
   "hooks": {
