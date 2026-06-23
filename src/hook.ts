@@ -133,11 +133,6 @@ async function ensureDaemon(): Promise<void> {
     // Fall through to spawn.
   }
 
-  // Resolve the daemonsudo binary path (same binary that spawned us).
-  const bin = process.execPath === process.argv[0]
-    ? process.argv[1]  // bun src/hook.ts → argv[1] is the script
-    : process.argv[1]; // node dist/hook.js → argv[1] is the dist file
-
   // Prefer the installed `daemonsudo` binary on PATH.
   const daemonsudoBin = "daemonsudo";
 

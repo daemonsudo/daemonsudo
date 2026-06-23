@@ -203,6 +203,11 @@ export async function runServe(configPath?: string): Promise<void> {
     process.exit(1);
   }
 
+  // We won the port bind → we're the sole owner. Only now is it safe to close
+  // out approvals orphaned by a previous daemon; a doomed second `serve` exits
+  // above before reaching this, leaving a live daemon's pending queue intact.
+  broker.recoverStalePending();
+
   if (config.telegram) {
     const tgToken = process.env[config.telegram.tokenEnv];
     if (!tgToken) {

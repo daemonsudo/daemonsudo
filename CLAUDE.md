@@ -18,7 +18,7 @@ Decisions there are settled (each records its reason). Do not relitigate stack o
 
 ## Stack (locked — reasons in GATE-PLAN §4)
 
-TypeScript; must run on **Node ≥20 AND Bun**. Official `@modelcontextprotocol/sdk` for all protocol work (write zero protocol code). SQLite (single file) for pending approvals + receipts. `@noble/ed25519` for signing. Hono for the server-rendered web pages (no React, no build step). Telegram via Bot API **long-polling** (no webhook/public URL). Packaged for `npx daemonsudo -- <cmd>`; bin exposes both `daemonsudo` and `dsudo`.
+TypeScript; must run on **Node ≥24 AND Bun**. Official `@modelcontextprotocol/sdk` for all protocol work (write zero protocol code). SQLite (single file) for pending approvals + receipts. `@noble/ed25519` for signing. Hono for the server-rendered web pages (no React, no build step). Telegram via Bot API **long-polling** (no webhook/public URL). Packaged for `npx daemonsudo -- <cmd>`; bin exposes both `daemonsudo` and `dsudo`.
 
 v0.1 cut list is binding (GATE-PLAN §4): no Cedar, no Slack/Discord, no Postgres, no Docker, no hosted anything, no dry-run/undo/analytics yet.
 

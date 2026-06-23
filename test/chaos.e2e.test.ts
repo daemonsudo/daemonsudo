@@ -52,7 +52,7 @@ describe("chaos: gate killed mid-approval", () => {
     expect(readFileSync(mockLog, "utf8")).toBe("");
 
     // a fresh gate adopting this db closes out the orphaned pending call
-    new ApprovalBroker(db, 60_000);
+    new ApprovalBroker(db, 60_000).recoverStalePending();
     const row = db.get<{ status: string }>("SELECT status FROM pending WHERE id = ?", [pendingId]);
     expect(row?.status).toBe("timeout");
 

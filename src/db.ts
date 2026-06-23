@@ -1,6 +1,6 @@
 /**
  * One SQLite file holds everything: pending approvals, receipts, signing keys.
- * Runtime-portable wrapper: bun:sqlite on Bun, node:sqlite on Node ≥22.5.
+ * Runtime-portable wrapper: bun:sqlite on Bun, node:sqlite on Node ≥24.
  */
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -85,7 +85,7 @@ async function openRaw(path: string): Promise<Db> {
     sqlite = await import("node:sqlite");
   } catch {
     throw new Error(
-      "daemonsudo needs SQLite: run with Bun, or Node >= 22.5 (node:sqlite). " +
+      "daemonsudo needs SQLite: run with Bun, or Node >= 24 (node:sqlite). " +
         `Current runtime: node ${process.versions.node}`,
     );
   }

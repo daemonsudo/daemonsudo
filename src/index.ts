@@ -184,6 +184,7 @@ async function main(): Promise<void> {
   const ledger = new Ledger(db, config.redact, makeSigner(loadOrCreateKeys(db)), config.gateHash);
   const rules = new YamlGlobEngine(config.rules, config.defaults);
   const broker = new ApprovalBroker(db, config.timeoutMs);
+  broker.recoverStalePending(); // adopt this db: close out a prior gate run's orphans
   const interceptor = new ToolGate(rules, ledger, broker);
 
   const web = await startWeb(broker, ledger, config);

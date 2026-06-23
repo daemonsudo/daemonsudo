@@ -60,10 +60,19 @@ export class ApprovalBroker {
   constructor(
     private db: Db,
     private timeoutMs: number,
-  ) {
-    // Fail-closed recovery: calls left pending by a previous gate process can
-    // never execute — their MCP requests died with it. Close them out.
-    db.run("UPDATE pending SET status = 'timeout', decided_at = ? WHERE status = 'pending'", [
+  ) {}
+
+  /**
+   * Fail-closed recovery: calls left pending by a previous gate process can
+   * never execute — their requests died with it. Close them out.
+   *
+   * Call only after this process has proven sole ownership of the gate (e.g. it
+   * won the web port bind). Running it eagerly in the constructor would let a
+   * second, doomed `serve` instance wipe a live daemon's in-flight approvals
+   * before failing on the port conflict.
+   */
+  recoverStalePending(): void {
+    this.db.run("UPDATE pending SET status = 'timeout', decided_at = ? WHERE status = 'pending'", [
       new Date().toISOString(),
     ]);
   }

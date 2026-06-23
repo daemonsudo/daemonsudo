@@ -28,6 +28,7 @@ const TEST_TOKEN_PATH = join(tmpdir(), `daemonsudo-cc-test-${Date.now()}.token`)
 const ROOT = join(import.meta.dir, "..");
 
 let serve: ReturnType<typeof Bun.spawn> | undefined;
+let configPath = "";
 
 async function waitReady(ms = 6000): Promise<void> {
   const deadline = Date.now() + ms;
@@ -71,7 +72,7 @@ beforeAll(async () => {
   serve.kill();
 
   // Write a temp config that uses port 14914.
-  const configPath = join(tmpdir(), `cc-test-config-${Date.now()}.yaml`);
+  configPath = join(tmpdir(), `cc-test-config-${Date.now()}.yaml`);
   const { writeFileSync } = await import("node:fs");
   writeFileSync(configPath, `timeout: 9m\nredact: ["*.token"]\nchannels:\n  web:\n    host: "127.0.0.1"\n    port: ${PORT}\n`);
 
@@ -238,5 +239,59 @@ describe("cc-serve /gate/approve + /gate/receipt", () => {
     db.close();
     expect(result.ok).toBe(true);
     expect(result.count).toBeGreaterThan(0);
+  });
+
+  test("a second serve on the taken port FATAL-exits without wiping pending approvals", async () => {
+    const t = token();
+    const sessionId = "sess-second-serve";
+    const toolInput = { command: "echo regression" };
+
+    // Park a call on the live daemon; /gate/approve blocks until decided.
+    let approveResp: Response | undefined;
+    const gatePromise = postHook("/gate/approve", {
+      session_id: sessionId,
+      tool_name: "Bash",
+      tool_input: toolInput,
+    }, t).then((r) => { approveResp = r; });
+
+    // Wait for the broker to park the call in SQLite.
+    let pending: { id: string; token: string } | undefined;
+    const dbPoll = await openDb(TEST_DB);
+    for (let i = 0; i < 30 && !pending; i++) {
+      pending = dbPoll.get<{ id: string; token: string }>(
+        "SELECT id, token FROM pending WHERE status = 'pending' ORDER BY created_at DESC LIMIT 1",
+      );
+      if (!pending) await new Promise<void>((r) => setTimeout(r, 100));
+    }
+    dbPoll.close();
+    expect(pending).toBeTruthy();
+
+    // Launch a second serve against the same port + same db. It must lose the
+    // port bind and exit non-zero — without running the pending-recovery sweep.
+    const second = Bun.spawn(
+      ["bun", join(ROOT, "src", "index.ts"), "serve", "--config", configPath],
+      { env: { ...process.env, DAEMONSUDO_DB: TEST_DB, DAEMONSUDO_TOKEN_PATH: TEST_TOKEN_PATH }, stderr: "pipe", stdout: "pipe" },
+    );
+    const exitCode = await second.exited;
+    expect(exitCode).not.toBe(0);
+
+    // The live daemon's parked call is untouched — still pending, still approvable.
+    const dbCheck = await openDb(TEST_DB);
+    const stillPending = dbCheck.get<{ status: string }>(
+      "SELECT status FROM pending WHERE id = ?", [pending!.id],
+    );
+    dbCheck.close();
+    expect(stillPending?.status).toBe("pending");
+
+    // And approving it still works end-to-end (settles the blocked request).
+    const decideRes = await fetch(`${BASE}/approve/${pending!.id}`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: `t=${pending!.token}&action=approve`,
+    });
+    expect(decideRes.ok).toBe(true);
+    await gatePromise;
+    expect(approveResp?.ok).toBe(true);
+    expect(((await approveResp!.json()) as { behavior: string }).behavior).toBe("allow");
   });
 });
