@@ -67,20 +67,22 @@ Most-specific glob wins, then file order. A JSON schema ships in the package (`g
 
 ## Gating Claude Code's own tools
 
-Everything above gates an MCP server. daemonsudo can also gate Claude Code's _native_ Bash / Edit / Write tools — no MCP involved.
+daemonsudo also gates Claude Code's _native_ Bash / Edit / Write tools — no MCP involved. Claude's app already approves `ask` prompts remotely when remote-control is active, but keeps no record; daemonsudo turns each call CC would `ask` about into a remote approval **and writes a signed receipt** you can `verify` offline. CC's own `ask`/`deny` rules are the sudoers file, so `gate.yaml` shrinks to just `channels`, `redact`, and `timeout`.
 
-daemonsudo's difference: Claude's app lets you approve `ask` prompts remotely, but it keeps no record afterward. daemonsudo writes a **signed, hash-chained receipt for every executed call** — a tamper-evident `auth.log` you can verify offline, long after the session ends.
+First put the CLI on PATH — the hooks call `daemonsudo` directly:
 
-Here, Claude Code's own `ask`/`deny` permission rules **are** the sudoers file: daemonsudo doesn't re-classify what's risky, it just turns each call CC would `ask` about into a remote approval on your phone and writes a signed receipt for everything that runs. The `gate.yaml` shrinks to just `channels`, `redact`, and `timeout` — the rule block above isn't used.
+```bash
+npm install -g daemonsudo   # or: bun install -g daemonsudo
+```
 
-Install the plugin — it registers the hooks and auto-starts the daemon:
+Then install the plugin — it registers the hooks and auto-starts the daemon:
 
 ```bash
 claude plugin marketplace add daemonsudo/daemonsudo
 claude plugin install daemonsudo@daemonsudo
 ```
 
-Or wire it up by hand: copy [`examples/claude-code-settings.json`](examples/claude-code-settings.json) (a curated `ask`-list — force-push, `rm -rf`, edits to `.github/workflows/**`, …) into your project's `.claude/settings.json` (or `~/.claude/settings.json` for all projects), then run `daemonsudo serve`. Same broker, same ledger, same `verify`.
+Or wire it by hand: copy [`examples/claude-code-settings.json`](examples/claude-code-settings.json) into `.claude/settings.json` and run `daemonsudo serve`.
 
 ## What an approval looks like
 
