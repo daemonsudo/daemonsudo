@@ -8,19 +8,22 @@ The complete spec lives at `../future-of-programming/GATE-PLAN.md` — product b
 
 Decisions there are settled (each records its reason). Do not relitigate stack or scope choices in passing — if one genuinely blocks you, stop and present the tradeoff instead of silently substituting.
 
+**Recorded deviation (2026-07-17, v0.3):** Discord shipped before Slack, contra GATE-PLAN §9½ — the hermit-fleet audit (`compiled/audit-claude-code-hermit-fit-2026-07-17.md`) and issue #1 supersede the roadmap order. Full v0.3 decisions: `PLAN-V3.md`.
+
 ## Hard invariants (never trade away)
 
 1. **Fail closed.** If the gate crashes, the DB is unavailable, or state is ambiguous, calls matching `approve`/`deny` rules must NOT reach the downstream server. Only `auto` passthrough may degrade gracefully.
 2. **Transparent proxy.** All MCP traffic except `tools/call` passes through byte-faithfully. A client must behave identically with the gate inserted — this is the standing e2e test.
 3. **No secrets in the ledger or in notifications.** Receipt args pass redaction globs before storage; full args are hashed, never stored raw when matched.
-4. **Render tool args as inert text.** Approval cards (web + Telegram) must escape/truncate everything — args are untrusted input and a prompt-injection vector.
-5. **Receipts are append-only, hash-chained, ed25519-signed.** `daemonsudo verify` must always be able to validate the chain offline.
+4. **Render tool args as inert text.** Approval cards (web, Telegram, Discord) must escape/truncate everything — args are untrusted input and a prompt-injection vector.
+5. **Receipts are append-only, hash-chained, ed25519-signed.** `daemonsudo verify` must always be able to validate the chain offline. `daemonsudo/v1` is additively extensible — consumers MUST ignore unknown fields; the verifier never validates a closed field set.
+6. **Split topology fails closed, auto included.** In remote-broker mode the daemon owns policy/keys/ledger; if it is unreachable, NOTHING executes — remote unreceipted execution would violate every-call-leaves-a-receipt. The gate listener (`gate.listen`) serves only `/health` + token-authed `/gate/*`; operator pages never mount there.
 
 ## Stack (locked — reasons in GATE-PLAN §4)
 
-TypeScript; must run on **Node ≥24 AND Bun**. Official `@modelcontextprotocol/sdk` for all protocol work (write zero protocol code). SQLite (single file) for pending approvals + receipts. `@noble/ed25519` for signing. Hono for the server-rendered web pages (no React, no build step). Telegram via Bot API **long-polling** (no webhook/public URL). Packaged for `npx daemonsudo -- <cmd>`; bin exposes both `daemonsudo` and `dsudo`.
+TypeScript; must run on **Node ≥24 AND Bun**. Official `@modelcontextprotocol/sdk` for all protocol work (write zero protocol code). SQLite (single file) for pending approvals + receipts + grants. `@noble/ed25519` for signing. Hono for the server-rendered web pages (no React, no build step). Telegram via Bot API **long-polling** (no webhook/public URL). Discord via **discord.js ^14** — the one recorded exception to the tiny-lockfile posture, traded for battle-tested gateway handling (PLAN-V3 Decision 13; the Bun smoke `examples/discord-smoke.mjs` gates it, contingency = raw Gateway WebSocket, never a Node-only channel). Packaged for `npx daemonsudo -- <cmd>`; bin exposes both `daemonsudo` and `dsudo`.
 
-v0.1 cut list is binding (GATE-PLAN §4): no Cedar, no Slack/Discord, no Postgres, no Docker, no hosted anything, no dry-run/undo/analytics yet.
+Cut list still binding after v0.3: no Cedar, no Slack, no Postgres, no hosted anything, no dry-run/undo/analytics, no arg-pattern grants. (Discord and the split-topology docker recipe shipped in v0.3 and are no longer cut.)
 
 ## Conventions
 
@@ -39,7 +42,9 @@ node examples/demo.mjs         # end-to-end demo: auto call + web-approved delet
 node dist/index.js verify      # walk the receipt chain offline (also: receipts; --db <path>)
 ```
 
-Test fixtures pin web ports 14909–14913 to avoid clashes. Tests set `DAEMONSUDO_DB` to temp dirs; the real db lives at `~/.gate/gate.db` (WAL — checkpointed on gate exit so the single file stays self-contained).
+Test fixtures pin web ports to avoid clashes — the registry: 14909–14913 (v0.1/v0.2 suites) · 14914 cc-serve · 14915 cc-hook · 14916 deny-reason · 14917 grants · 14918/14919 split-listen · 14920 remote e2e · 14921 remote chaos · 14922 mirror. New test files must claim the next free port here. Tests set `DAEMONSUDO_DB` to temp dirs; the real db lives at `~/.gate/gate.db` (WAL — checkpointed on gate exit so the single file stays self-contained).
+
+Hermit interop: hermits deny `Bash(*sudo *)`, which blocks the entire `daemonsudo`/`dsudo` CLI from agent context — so all operator CLI surface (`grants`, `grant`, `revoke`, `mirror`, `verify --against`) is operator-side by construction. Don't build agent-side flows that shell out to the CLI.
 
 ## Ecosystem facts the docs assume
 

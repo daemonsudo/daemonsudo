@@ -24,11 +24,11 @@ Use two-space indentation, double quotes, semicolons, trailing commas, and ESM i
 
 ## Testing Guidelines
 
-Tests use `bun:test` and follow `*.test.ts`; end-to-end cases use `*.e2e.test.ts`. Add focused unit coverage for rules and ledger behavior and proxy e2e coverage for protocol changes. Preserve the chaos invariant: killing the gate during approval must fail closed without downstream execution. Fixtures reserve ports 14909–14913.
+Tests use `bun:test` and follow `*.test.ts`; end-to-end cases use `*.e2e.test.ts`. Add focused unit coverage for rules and ledger behavior and proxy e2e coverage for protocol changes. Preserve the chaos invariants: killing the gate (or, in remote mode, the daemon or the proxy) during approval must fail closed without downstream execution. Fixtures reserve ports 14909–14922 (see the registry in `CLAUDE.md`); new test files claim the next free port.
 
 ## Security & Architecture Invariants
 
-Approval and deny paths must fail closed. Preserve byte-faithful passthrough outside `tools/call`; use the official `@modelcontextprotocol/sdk` rather than hand-writing protocol logic. Never store or notify raw matched secrets, and render arguments as inert escaped, truncated text. Receipts remain append-only, hash-chained, Ed25519-signed, and offline-verifiable. Support Bun and Node 22.5+. Keep web pages server-rendered with Hono and Telegram long-polling. Do not add parked v0.1 features such as Docker, Postgres, Slack/Discord, Cedar, or hosted services.
+Approval and deny paths must fail closed — in remote-broker mode that includes `auto` (daemon unreachable = nothing executes). Preserve byte-faithful passthrough outside `tools/call`; use the official `@modelcontextprotocol/sdk` rather than hand-writing protocol logic. Never store or notify raw matched secrets, and render arguments as inert escaped, truncated text on every channel (web, Telegram, Discord). Receipts remain append-only, hash-chained, Ed25519-signed, offline-verifiable, and additively extensible (consumers ignore unknown fields). Support Bun and Node ≥24. Keep web pages server-rendered with Hono and Telegram long-polling; Discord uses discord.js ^14 (the recorded dependency exception — its Bun smoke is `examples/discord-smoke.mjs`). The `gate.listen` listener serves only `/health` + token-authed `/gate/*`; operator pages stay off it. Grants are MCP-door only and never override explicit deny rules. Do not add still-parked features: Cedar, Slack, Postgres, hosted services, arg-pattern grants.
 
 ## Commit & Pull Request Guidelines
 

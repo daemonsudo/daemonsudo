@@ -4,17 +4,18 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "../src/config.js";
-import { tmpDir } from "./helpers.js";
+import { GATE_CMD, tmpDir } from "./helpers.js";
 
 const ROOT = join(import.meta.dir, "..");
 const PRESETS = readdirSync(join(ROOT, "presets")).filter((f) => f.endsWith(".yaml"));
 
 const cli = (cwd: string, ...args: string[]) =>
-  Bun.spawnSync(["bun", join(ROOT, "src", "index.ts"), ...args], { cwd });
+  Bun.spawnSync([...GATE_CMD, ...args], { cwd });
 
 describe("presets", () => {
-  // claude-code.yaml is daemon config for the CC door — it has no MCP rules.
-  const MCP_PRESETS = PRESETS.filter((f) => f !== "claude-code.yaml");
+  // claude-code.yaml (CC-door daemon config) and remote.yaml (container-side
+  // remote-broker mode) carry no MCP rules — policy lives elsewhere.
+  const MCP_PRESETS = PRESETS.filter((f) => f !== "claude-code.yaml" && f !== "remote.yaml");
 
   test("all presets parse and are safe by default", () => {
     expect(PRESETS.length).toBeGreaterThanOrEqual(7); // default + 5 curated + claude-code

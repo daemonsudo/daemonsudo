@@ -5,7 +5,20 @@
  * (no parse_mode) and truncated: args are untrusted input, never interpreted.
  */
 import type { ApprovalBroker, PendingCall } from "../broker.js";
+import { GRANT_INTENTS, isKnownAction } from "../grants.js";
+import type { Channel } from "./channel.js";
 import { renderArgs } from "../web/index.js";
+
+/** Grant buttons appear only on MCP-origin cards (CC has native standing allows). */
+function keyboardFor(p: PendingCall): Array<Array<{ text: string; callback_data: string }>> {
+  const btn = (text: string, act: string) => ({ text, callback_data: `${act}:${p.id}:${p.nonce}` });
+  const rows = [[btn("✅ Approve once", "a")]];
+  if (p.origin === "mcp") {
+    rows.push([btn("✅ 15m", "g15"), btn("✅ 1h", "g60"), btn("✅ session", "gs")]);
+  }
+  rows.push([btn("❌ Deny", "d"), btn("✋ Deny + reason", "r")]);
+  return rows;
+}
 
 export interface TelegramOptions {
   token: string;
@@ -15,6 +28,8 @@ export interface TelegramOptions {
   /** test seam */
   fetchFn?: typeof fetch;
   pollTimeoutSec?: number;
+  /** how long a "Deny + reason" force-reply waits before denying without one */
+  reasonTimeoutMs?: number;
 }
 
 interface TgUpdate {
@@ -25,12 +40,24 @@ interface TgUpdate {
     data?: string;
     message?: { chat: { id: number }; message_id: number; text?: string };
   };
+  message?: {
+    message_id: number;
+    from?: { id?: number };
+    chat: { id: number };
+    text?: string;
+    reply_to_message?: { message_id: number };
+  };
 }
 
-export class TelegramChannel {
+export class TelegramChannel implements Channel {
   private fetchFn: typeof fetch;
   private offset = 0;
   private running = false;
+  /** "chat_id:prompt_message_id" → the pending deny awaiting a reason reply */
+  private awaitingReason = new Map<
+    string,
+    { id: string; nonce: string; timer: ReturnType<typeof setTimeout> }
+  >();
 
   constructor(private opts: TelegramOptions) {
     this.fetchFn = opts.fetchFn ?? fetch;
@@ -49,6 +76,8 @@ export class TelegramChannel {
 
   stop(): void {
     this.running = false;
+    for (const { timer } of this.awaitingReason.values()) clearTimeout(timer);
+    this.awaitingReason.clear();
   }
 
   private async api<T = unknown>(method: string, body: Record<string, unknown>): Promise<T> {
@@ -74,18 +103,14 @@ export class TelegramChannel {
         this.api("sendMessage", {
           chat_id: user,
           text,
-          reply_markup: {
-            inline_keyboard: [[
-              { text: "✅ Approve", callback_data: `a:${p.id}:${p.nonce}` },
-              { text: "❌ Deny", callback_data: `d:${p.id}:${p.nonce}` },
-            ]],
-          },
+          reply_markup: { inline_keyboard: keyboardFor(p) },
         }),
       ),
     );
   }
 
   async handleUpdate(update: TgUpdate): Promise<void> {
+    if (update.message) return this.handleReasonReply(update.message);
     const cq = update.callback_query;
     if (!cq) return;
     const from = cq.from?.id;
@@ -97,16 +122,22 @@ export class TelegramChannel {
       return;
     }
     const [act, id, nonce] = (cq.data ?? "").split(":");
-    if ((act !== "a" && act !== "d") || !id || !nonce) {
+    if (!isKnownAction(act) || !id || !nonce) {
       await answer("malformed callback");
       return;
     }
-    const approve = act === "a";
+    if (act === "r") {
+      await this.promptForReason(cq.message?.chat.id, id, nonce, from);
+      await answer("reply with the reason…");
+      return;
+    }
+    const approve = act !== "d";
     const res = this.opts.broker.decide(id, {
       approve,
       channel: "telegram",
       user: String(from),
       nonce,
+      grant: GRANT_INTENTS[act],
     });
     await answer(res.ok ? (approve ? "approved ✓" : "denied ✗") : `failed: ${res.error}`);
     if (res.ok && cq.message) {
@@ -119,13 +150,58 @@ export class TelegramChannel {
     }
   }
 
+  /** "Deny + reason": force-reply prompt; no reply within the sub-timeout → deny without one. */
+  private async promptForReason(
+    chatId: number | undefined,
+    id: string,
+    nonce: string,
+    from: number,
+  ): Promise<void> {
+    const denyWithout = (reason?: string) =>
+      this.opts.broker.decide(id, { approve: false, channel: "telegram", user: String(from), nonce, reason });
+    if (chatId === undefined) {
+      denyWithout();
+      return;
+    }
+    const prompt = await this.api<{ message_id: number }>("sendMessage", {
+      chat_id: chatId,
+      text: "Reply to this message with the deny reason (60s, else denied without one).",
+      reply_markup: { force_reply: true },
+    });
+    const key = `${chatId}:${prompt.message_id}`;
+    const timer = setTimeout(() => {
+      this.awaitingReason.delete(key);
+      denyWithout();
+    }, this.opts.reasonTimeoutMs ?? 60_000);
+    this.awaitingReason.set(key, { id, nonce, timer });
+  }
+
+  private handleReasonReply(msg: NonNullable<TgUpdate["message"]>): void {
+    const replyTo = msg.reply_to_message?.message_id;
+    if (replyTo === undefined) return;
+    const entry = this.awaitingReason.get(`${msg.chat.id}:${replyTo}`);
+    if (!entry) return;
+    const from = msg.from?.id;
+    if (from === undefined || !this.opts.allowedUsers.includes(from)) return; // strangers can't supply reasons
+    this.awaitingReason.delete(`${msg.chat.id}:${replyTo}`);
+    clearTimeout(entry.timer);
+    const reason = (msg.text ?? "").trim().slice(0, 300) || undefined;
+    this.opts.broker.decide(entry.id, {
+      approve: false,
+      channel: "telegram",
+      user: String(from),
+      nonce: entry.nonce,
+      reason,
+    });
+  }
+
   private async pollLoop(): Promise<void> {
     while (this.running) {
       try {
         const updates = await this.api<TgUpdate[]>("getUpdates", {
           offset: this.offset,
           timeout: this.opts.pollTimeoutSec ?? 50,
-          allowed_updates: ["callback_query"],
+          allowed_updates: ["callback_query", "message"],
         });
         for (const u of updates ?? []) {
           this.offset = u.update_id + 1;

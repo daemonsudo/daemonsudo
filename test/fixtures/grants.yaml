@@ -1,0 +1,8 @@
+defaults: auto
+timeout: 30s
+rules:
+  delete_thing: approve
+channels:
+  web:
+    host: "127.0.0.1"
+    port: 14917

@@ -20,10 +20,26 @@ export interface GateConfig {
     tokenEnv: string;
     allowedUsers: number[];
   };
+  /** allowed_users are STRINGS — Discord snowflakes exceed 2^53 */
+  discord?: {
+    tokenEnv: string;
+    allowedUsers: string[];
+  };
   web: {
     host: string;
     port: number;
   };
+  /** optional second listener serving ONLY /health + /gate/* (docker bridge) */
+  gateListen?: {
+    host: string;
+    port: number;
+  };
+  /** grants.max_ttl clamp for approve-with-grant TTLs (default 8h) */
+  grantsMaxTtlMs: number;
+  /** remote-broker mode: the host daemon deciding for this proxy (env DAEMONSUDO_REMOTE_URL wins) */
+  remoteUrl?: string;
+  /** off-box checkpoint mirror (truncation/rewrite witness) */
+  mirror?: { url: string; tokenEnv: string };
   /** sha256 of the gate.yaml bytes in force — stamped on every receipt */
   gateHash: string;
   /** opt-in weekly ping of {version, anon_id} — default off */
@@ -77,7 +93,11 @@ export function loadConfig(path?: string): GateConfig {
 
   const channels = (raw.channels ?? {}) as Record<string, Record<string, unknown>>;
   const tg = channels.telegram;
+  const dc = channels.discord;
   const web = channels.web ?? {};
+  const gateListen = ((raw.gate ?? {}) as Record<string, Record<string, unknown>>).listen;
+  const remote = raw.remote as Record<string, unknown> | undefined;
+  const mirror = raw.mirror as Record<string, unknown> | undefined;
 
   return {
     defaults: raw.defaults === undefined ? "approve" : asAction(raw.defaults, "defaults"),
@@ -90,10 +110,30 @@ export function loadConfig(path?: string): GateConfig {
           allowedUsers: ((tg.allowed_users ?? []) as unknown[]).map(Number),
         }
       : undefined,
+    discord: dc
+      ? {
+          tokenEnv: String(dc.token_env ?? "GATE_DISCORD_TOKEN"),
+          // String, not Number: snowflakes don't fit in a double
+          allowedUsers: ((dc.allowed_users ?? []) as unknown[]).map(String),
+        }
+      : undefined,
     web: {
       host: String(web.host ?? "127.0.0.1"),
       port: web.port === undefined ? 4910 : Number(web.port),
     },
+    gateListen: gateListen
+      ? {
+          host: String(gateListen.host ?? "127.0.0.1"),
+          port: gateListen.port === undefined ? 4911 : Number(gateListen.port),
+        }
+      : undefined,
+    grantsMaxTtlMs: parseDuration(
+      ((raw.grants as Record<string, unknown> | undefined)?.max_ttl as string | number) ?? "8h",
+    ),
+    remoteUrl: remote?.url ? String(remote.url) : undefined,
+    mirror: mirror?.url
+      ? { url: String(mirror.url), tokenEnv: String(mirror.token_env ?? "DAEMONSUDO_MIRROR_TOKEN") }
+      : undefined,
     gateHash,
     telemetry: raw.telemetry === true,
   };

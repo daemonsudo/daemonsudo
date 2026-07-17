@@ -25,6 +25,62 @@
       "type": "array",
       "items": { "type": "string" }
     },
+    "telemetry": {
+      "description": "Opt-in weekly ping of {version, anon_id}. Default off.",
+      "type": "boolean",
+      "default": false
+    },
+    "grants": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_ttl": {
+          "description": "Clamp for approve-with-grant TTLs (e.g. '8h'). Session grants live for the gate/daemon process lifetime.",
+          "type": ["string", "number"],
+          "default": "8h"
+        }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "listen": {
+          "description": "Optional second listener serving ONLY /health (tokenless) + token-authed /gate/* — bind it to a docker bridge for split topology. Operator pages never appear here. FATAL if it cannot bind.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "host": { "type": "string", "default": "127.0.0.1" },
+            "port": { "type": "integer", "default": 4911 }
+          }
+        }
+      }
+    },
+    "remote": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "description": "Remote-broker mode: the host daemon's gate URL. The proxy holds no policy/keys/ledger; daemon unreachable = everything fails closed, auto included. Env DAEMONSUDO_REMOTE_URL wins.",
+          "type": "string"
+        }
+      }
+    },
+    "mirror": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "description": "Off-box checkpoint receiver (daemonsudo mirror --listen). Signed head checkpoints stream here; verify --against detects truncation/rewrite.",
+          "type": "string"
+        },
+        "token_env": {
+          "description": "Name of the environment variable holding the mirror bearer token.",
+          "type": "string",
+          "default": "DAEMONSUDO_MIRROR_TOKEN"
+        }
+      }
+    },
     "channels": {
       "type": "object",
       "additionalProperties": false,
@@ -42,6 +98,22 @@
               "description": "Telegram user IDs allowed to approve.",
               "type": "array",
               "items": { "type": "integer" }
+            }
+          }
+        },
+        "discord": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "token_env": {
+              "description": "Name of the environment variable holding the bot token (never the token itself).",
+              "type": "string",
+              "default": "GATE_DISCORD_TOKEN"
+            },
+            "allowed_users": {
+              "description": "Discord user IDs (snowflakes) allowed to approve — STRINGS, they exceed 2^53.",
+              "type": "array",
+              "items": { "type": "string" }
             }
           }
         },

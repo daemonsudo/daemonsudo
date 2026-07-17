@@ -36,7 +36,22 @@ CREATE TABLE IF NOT EXISTS pending (
   nonce TEXT NOT NULL,
   decided_channel TEXT,
   decided_user TEXT,
-  decided_at TEXT
+  decided_at TEXT,
+  decided_reason TEXT,
+  origin TEXT NOT NULL DEFAULT 'mcp'
+);
+CREATE TABLE IF NOT EXISTS grants (
+  id TEXT PRIMARY KEY,
+  server TEXT NOT NULL,
+  tool TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT,
+  session_boot TEXT,
+  created_channel TEXT NOT NULL,
+  created_user TEXT NOT NULL,
+  receipt_id TEXT NOT NULL,
+  revoked_at TEXT,
+  revoke_receipt_id TEXT
 );
 CREATE TABLE IF NOT EXISTS keys (
   kid TEXT PRIMARY KEY,
@@ -65,10 +80,34 @@ export async function openDb(path: string): Promise<Db> {
     );
   }
   db.exec(SCHEMA);
+  migrate(db);
   return db;
 }
 
-async function openRaw(path: string): Promise<Db> {
+/**
+ * Additive migrations for dbs created before v0.3 (user_version < 2). Fresh
+ * dbs get the full v2 shape from SCHEMA; each step is guarded so a
+ * half-applied run is safe to repeat. v0.2 binaries opening a v2 db keep
+ * working — columns are additive and v0.2 INSERTs use explicit column lists.
+ */
+function migrate(db: Db): void {
+  const version = db.get<{ user_version: number }>("PRAGMA user_version")?.user_version ?? 0;
+  if (version >= 2) return;
+  const pendingCols = new Set(
+    db.all<{ name: string }>("SELECT name FROM pragma_table_info('pending')").map((c) => c.name),
+  );
+  if (!pendingCols.has("decided_reason")) {
+    db.exec("ALTER TABLE pending ADD COLUMN decided_reason TEXT;");
+  }
+  if (!pendingCols.has("origin")) {
+    db.exec("ALTER TABLE pending ADD COLUMN origin TEXT NOT NULL DEFAULT 'mcp';");
+  }
+  // grants table already covered by SCHEMA's CREATE TABLE IF NOT EXISTS
+  db.exec("PRAGMA user_version = 2;");
+}
+
+/** Open without schema/migrations — test fixtures build old-shaped dbs with it. */
+export async function openRaw(path: string): Promise<Db> {
   if (process.versions.bun) {
     const { Database } = await import("bun:sqlite");
     const db = new Database(path, { create: true });

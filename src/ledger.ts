@@ -52,10 +52,22 @@ export interface Receipt {
   gate_hash: string;
   requester?: Requester;
   approver?: Approver;
+  /** approver's one-line deny reason (additive, v0.3) */
+  reason?: string;
+  /** grant minted by this approval (additive, v0.3) */
+  grant?: GrantStamp;
+  /** the standing grant this call executed under (additive, v0.3) */
+  grant_id?: string;
   result?: { status: "ok" | "error"; content_hash: string };
   /** fingerprint of the signing key — verification survives key rotation */
   kid?: string;
   sig: string;
+}
+
+export interface GrantStamp {
+  id: string;
+  scope: { server: string; tool: string };
+  expires_at: string | null;
 }
 
 export interface ReceiptInput {
@@ -66,6 +78,9 @@ export interface ReceiptInput {
   rule: string;
   requester?: Requester;
   approver?: Approver;
+  reason?: string;
+  grant?: GrantStamp;
+  grant_id?: string;
   result?: { status: "ok" | "error"; content_hash: string };
 }
 
@@ -202,45 +217,54 @@ export class Ledger {
     private redactGlobs: string[] = [],
     private signer?: Signer,
     gateHash?: string,
+    /** invoked after each committed append with the signed head checkpoint JSON */
+    private onCheckpoint?: (checkpointJson: string) => void,
   ) {
     this.chainId = loadOrCreateChainId(db);
     this.gateHash = gateHash ?? sha256("daemonsudo-no-gate-config");
   }
 
   append(input: ReceiptInput): Receipt {
-    const last = this.db.get<{ seq: number; json: string }>(
-      "SELECT seq, json FROM receipts ORDER BY seq DESC LIMIT 1",
-    );
-    const unsigned: Omit<Receipt, "sig"> = {
-      schema: SCHEMA_ID,
-      id: ulid(),
-      chain_id: this.chainId,
-      seq: (last?.seq ?? 0) + 1,
-      prev_hash: sha256(last ? last.json : GENESIS),
-      ts: new Date().toISOString(),
-      server: input.server,
-      tool: input.tool,
-      args_hash: sha256(canonicalJson(input.args ?? {})),
-      args_redacted: redact(input.args ?? {}, this.redactGlobs),
-      decision: input.decision,
-      rule: input.rule,
-      gate_hash: this.gateHash,
-      ...(input.requester ? { requester: input.requester } : {}),
-      ...(input.approver ? { approver: input.approver } : {}),
-      ...(input.result ? { result: input.result } : {}),
-      ...(this.signer ? { kid: this.signer.kid } : {}),
-    };
-    const sig = this.signer ? this.signer.sign(canonicalJson(unsigned)) : "unsigned";
-    const receipt: Receipt = { ...unsigned, sig };
-    const json = canonicalJson(receipt);
-    // receipt + head checkpoint move together or not at all
+    // Read the last seq inside the txn: two writers (gate + grants CLI) must
+    // not build receipts against the same head.
     this.db.exec("BEGIN IMMEDIATE;");
+    let receipt: Receipt;
+    let checkpointJson: string;
     try {
+      const last = this.db.get<{ seq: number; json: string }>(
+        "SELECT seq, json FROM receipts ORDER BY seq DESC LIMIT 1",
+      );
+      const unsigned: Omit<Receipt, "sig"> = {
+        schema: SCHEMA_ID,
+        id: ulid(),
+        chain_id: this.chainId,
+        seq: (last?.seq ?? 0) + 1,
+        prev_hash: sha256(last ? last.json : GENESIS),
+        ts: new Date().toISOString(),
+        server: input.server,
+        tool: input.tool,
+        args_hash: sha256(canonicalJson(input.args ?? {})),
+        args_redacted: redact(input.args ?? {}, this.redactGlobs),
+        decision: input.decision,
+        rule: input.rule,
+        gate_hash: this.gateHash,
+        ...(input.requester ? { requester: input.requester } : {}),
+        ...(input.approver ? { approver: input.approver } : {}),
+        ...(input.reason ? { reason: input.reason } : {}),
+        ...(input.grant ? { grant: input.grant } : {}),
+        ...(input.grant_id ? { grant_id: input.grant_id } : {}),
+        ...(input.result ? { result: input.result } : {}),
+        ...(this.signer ? { kid: this.signer.kid } : {}),
+      };
+      const sig = this.signer ? this.signer.sign(canonicalJson(unsigned)) : "unsigned";
+      receipt = { ...unsigned, sig };
+      const json = canonicalJson(receipt);
+      // receipt + head checkpoint move together or not at all
       this.db.run(
         "INSERT INTO receipts (seq, id, ts, server, tool, decision, json) VALUES (?, ?, ?, ?, ?, ?, ?)",
         [receipt.seq, receipt.id, receipt.ts, receipt.server, receipt.tool, receipt.decision, json],
       );
-      this.writeCheckpoint(receipt.seq, json);
+      checkpointJson = this.writeCheckpoint(receipt.seq, json);
       this.db.exec("COMMIT;");
     } catch (e) {
       try {
@@ -250,11 +274,16 @@ export class Ledger {
       }
       throw e;
     }
+    try {
+      this.onCheckpoint?.(checkpointJson);
+    } catch (e) {
+      console.error("daemonsudo: checkpoint hook failed:", e instanceof Error ? e.message : e);
+    }
     return receipt;
   }
 
   /** Signed head pointer — deleting the newest receipts leaves it dangling. */
-  private writeCheckpoint(seq: number, json: string): void {
+  private writeCheckpoint(seq: number, json: string): string {
     const payload = {
       chain_id: this.chainId,
       seq,
@@ -262,11 +291,13 @@ export class Ledger {
       ...(this.signer ? { kid: this.signer.kid } : {}),
     };
     const sig = this.signer ? this.signer.sign(canonicalJson(payload)) : "unsigned";
+    const checkpointJson = canonicalJson({ ...payload, sig });
     this.db.run(
       "INSERT INTO ledger_meta (key, value) VALUES ('checkpoint', ?) " +
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-      [canonicalJson({ ...payload, sig })],
+      [checkpointJson],
     );
+    return checkpointJson;
   }
 
   list(limit = 200): Receipt[] {
@@ -285,6 +316,15 @@ export interface VerifyResult {
   count: number;
   error?: string;
   badSeq?: number;
+}
+
+/** A signed head checkpoint, as written to ledger_meta and streamed to mirrors. */
+export interface Checkpoint {
+  chain_id: string;
+  seq: number;
+  receipt_hash: string;
+  kid?: string;
+  sig: string;
 }
 
 export type VerifierFn = (payload: string, sig: string) => boolean;
@@ -335,13 +375,7 @@ export function verifyChain(db: Db, keys: Map<string, VerifierFn>): VerifyResult
   if (!cpRow) {
     return { ok: false, count, error: "head checkpoint missing — ledger tail may have been truncated" };
   }
-  const cp = JSON.parse(cpRow.value) as {
-    chain_id: string;
-    seq: number;
-    receipt_hash: string;
-    kid?: string;
-    sig: string;
-  };
+  const cp = JSON.parse(cpRow.value) as Checkpoint;
   const { sig: cpSig, ...cpUnsigned } = cp;
   const cpVerify = cp.kid === undefined ? undefined : keys.get(cp.kid);
   if (!cpVerify || !cpVerify(canonicalJson(cpUnsigned), cpSig)) {
@@ -360,4 +394,48 @@ export function verifyChain(db: Db, keys: Map<string, VerifierFn>): VerifyResult
     };
   }
   return { ok: true, count };
+}
+
+/**
+ * The attack local verify can't see: the key holder deletes the newest rows
+ * (or rewrites one) and re-signs a fresh head checkpoint. Mirrored
+ * checkpoints are the outside witness: every mirrored (seq, receipt_hash)
+ * must match the local receipt at that seq, and the local head must reach
+ * the highest mirrored seq. Pure read — works offline against a JSONL file.
+ *
+ * Coverage: only receipts up to the highest WITNESSED seq are attested.
+ * Receipts appended after the mirror's last acknowledged push are
+ * unwitnessed until the next push lands — a detection-latency window,
+ * not full-chain attestation.
+ */
+export function verifyAgainstMirror(
+  db: Db,
+  keys: Map<string, VerifierFn>,
+  checkpoints: Checkpoint[],
+): VerifyResult {
+  const chainRow = db.get<{ value: string }>("SELECT value FROM ledger_meta WHERE key = 'chain_id'");
+  const relevant = checkpoints.filter((cp) => cp.chain_id === chainRow?.value);
+  if (relevant.length === 0) {
+    return { ok: false, count: 0, error: "mirror holds no checkpoints for this chain" };
+  }
+  const localHead =
+    db.get<{ seq: number }>("SELECT seq FROM receipts ORDER BY seq DESC LIMIT 1")?.seq ?? 0;
+  for (const cp of relevant) {
+    const fail = (error: string): VerifyResult => ({ ok: false, count: relevant.length, badSeq: cp.seq, error });
+    const verifySig = cp.kid === undefined ? undefined : keys.get(cp.kid);
+    const { sig, ...unsigned } = cp;
+    if (!verifySig || !verifySig(canonicalJson(unsigned), sig)) {
+      return fail(`mirrored checkpoint at seq ${cp.seq} has an invalid signature`);
+    }
+    if (cp.seq > localHead) {
+      return fail(
+        `ledger truncated — mirror witnessed seq ${cp.seq}, local ledger ends at ${localHead}`,
+      );
+    }
+    const row = db.get<{ json: string }>("SELECT json FROM receipts WHERE seq = ?", [cp.seq]);
+    if (!row || sha256(row.json) !== cp.receipt_hash) {
+      return fail(`receipt #${cp.seq} rewritten — local hash differs from the mirror's witness`);
+    }
+  }
+  return { ok: true, count: relevant.length };
 }

@@ -14,7 +14,7 @@ import {
   type KeyPair,
   type Receipt,
 } from "../src/ledger.js";
-import { tmpDir } from "./helpers.js";
+import { GATE_CMD, tmpDir } from "./helpers.js";
 
 async function signedLedger(): Promise<{ db: Db; ledger: Ledger; keys: KeyPair }> {
   const db = await openDb(join(tmpDir(), "gate.db"));
@@ -135,8 +135,7 @@ describe("signed receipt chain", () => {
 });
 
 describe("daemonsudo verify CLI", () => {
-  const cli = (...args: string[]) =>
-    Bun.spawnSync(["bun", join(import.meta.dir, "..", "src", "index.ts"), ...args]);
+  const cli = (...args: string[]) => Bun.spawnSync([...GATE_CMD, ...args]);
 
   test("✓ exit 0 on a clean ledger; ✗ exit 1 after tampering", async () => {
     const path = join(tmpDir(), "gate.db");

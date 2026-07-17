@@ -7,6 +7,9 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { ulid } from "ulid";
 import type { Db } from "./db.js";
+import type { GrantIntent } from "./grants.js";
+
+export type Origin = "mcp" | "cc";
 
 export interface PendingCall {
   id: string;
@@ -16,6 +19,7 @@ export interface PendingCall {
   tool: string;
   args: unknown;
   rule: string;
+  origin: Origin;
   token: string;
   nonce: string;
 }
@@ -25,6 +29,8 @@ export interface BrokerDecision {
   channel?: string;
   user?: string;
   reason?: string;
+  /** approve-with-grant intent — the core (not channels) creates the grant row */
+  grant?: GrantIntent;
 }
 
 export interface ParkedCall {
@@ -42,6 +48,7 @@ interface PendingRow {
   args_json: string;
   rule: string;
   status: string;
+  origin: Origin;
   token: string;
   nonce: string;
 }
@@ -83,7 +90,13 @@ export class ApprovalBroker {
   }
 
   /** Park a call. Throws if the DB is unavailable — callers must fail closed. */
-  park(input: { server: string; tool: string; args: unknown; rule: string }): ParkedCall {
+  park(input: {
+    server: string;
+    tool: string;
+    args: unknown;
+    rule: string;
+    origin: Origin;
+  }): ParkedCall {
     const id = ulid();
     const token = randomBytes(16).toString("hex");
     const nonce = randomBytes(8).toString("hex");
@@ -97,14 +110,15 @@ export class ApprovalBroker {
       tool: input.tool,
       args: input.args,
       rule: input.rule,
+      origin: input.origin,
       token,
       nonce,
     };
     this.db.run(
-      `INSERT INTO pending (id, created_at, expires_at, server, tool, args_json, rule, status, token, nonce)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+      `INSERT INTO pending (id, created_at, expires_at, server, tool, args_json, rule, status, origin, token, nonce)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
       [id, pending.created_at, pending.expires_at, input.server, input.tool,
-       JSON.stringify(input.args ?? {}), input.rule, token, nonce],
+       JSON.stringify(input.args ?? {}), input.rule, input.origin, token, nonce],
     );
     const decision = new Promise<BrokerDecision>((resolve) => {
       this.waiters.set(id, resolve);
@@ -129,7 +143,15 @@ export class ApprovalBroker {
    */
   decide(
     id: string,
-    opts: { approve: boolean; channel: string; user: string; token?: string; nonce?: string },
+    opts: {
+      approve: boolean;
+      channel: string;
+      user: string;
+      token?: string;
+      nonce?: string;
+      reason?: string;
+      grant?: GrantIntent;
+    },
   ): { ok: boolean; error?: string } {
     const row = this.db.get<PendingRow>("SELECT * FROM pending WHERE id = ?", [id]);
     if (!row) return { ok: false, error: "unknown approval id" };
@@ -147,6 +169,8 @@ export class ApprovalBroker {
       status: opts.approve ? "approved" : "denied",
       channel: opts.channel,
       user: opts.user,
+      reason: opts.reason,
+      grant: opts.approve ? opts.grant : undefined,
     });
     return { ok: true };
   }
@@ -179,6 +203,7 @@ export class ApprovalBroker {
       tool: row.tool,
       args: JSON.parse(row.args_json),
       rule: row.rule,
+      origin: row.origin,
       token: row.token,
       nonce: row.nonce,
     };
@@ -192,10 +217,10 @@ export class ApprovalBroker {
     this.waiters.delete(id);
     try {
       this.db.run(
-        `UPDATE pending SET status = ?, decided_channel = ?, decided_user = ?, decided_at = ?
+        `UPDATE pending SET status = ?, decided_channel = ?, decided_user = ?, decided_at = ?, decided_reason = ?
          WHERE id = ? AND status = 'pending'`,
         [decision.status, decision.channel ?? null, decision.user ?? null,
-         new Date().toISOString(), id],
+         new Date().toISOString(), decision.reason ?? null, id],
       );
     } catch (e) {
       console.error("daemonsudo: pending update failed:", e instanceof Error ? e.message : e);

@@ -53,3 +53,16 @@ channels:
   #   token_env: GATE_TELEGRAM_TOKEN   # export GATE_TELEGRAM_TOKEN=<your bot token>
   #   allowed_users:
   #     - 123456789                    # your Telegram user ID
+
+  # Or Discord (user IDs are strings — snowflakes exceed 2^53):
+  # discord:
+  #   token_env: GATE_DISCORD_TOKEN
+  #   allowed_users: ["123456789012345678"]
+
+# Split topology (Claude Code running in a container, this daemon on the host):
+# add a second, token-authed listener on the docker bridge and point the
+# container's hooks at it. Full recipe: docs/split-topology.md
+# gate:
+#   listen: { host: 172.17.0.1, port: 4911 }
+# …container env: DAEMONSUDO_BASE_URL=http://host.docker.internal:4911
+#                 DAEMONSUDO_TOKEN=<this host's serve token>

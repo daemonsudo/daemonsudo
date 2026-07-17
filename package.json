@@ -1,6 +1,6 @@
 {
   "name": "daemonsudo",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "sudo for AI agents — remote approval + signed receipts for MCP and Claude Code tool calls",
   "license": "MIT",
   "type": "module",
@@ -43,6 +43,7 @@
     "@hono/node-server": "^2.0.4",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@noble/ed25519": "^3.1.0",
+    "discord.js": "^14",
     "hono": "^4.12.25",
     "ulid": "^3.0.2",
     "yaml": "^2.9.0"
