@@ -7,6 +7,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { ulid } from "ulid";
 import type { Db } from "./db.js";
+import type { GrantIntent } from "./grants.js";
 
 export type Origin = "mcp" | "cc";
 
@@ -28,6 +29,8 @@ export interface BrokerDecision {
   channel?: string;
   user?: string;
   reason?: string;
+  /** approve-with-grant intent — the core (not channels) creates the grant row */
+  grant?: GrantIntent;
 }
 
 export interface ParkedCall {
@@ -147,6 +150,7 @@ export class ApprovalBroker {
       token?: string;
       nonce?: string;
       reason?: string;
+      grant?: GrantIntent;
     },
   ): { ok: boolean; error?: string } {
     const row = this.db.get<PendingRow>("SELECT * FROM pending WHERE id = ?", [id]);
@@ -166,6 +170,7 @@ export class ApprovalBroker {
       channel: opts.channel,
       user: opts.user,
       reason: opts.reason,
+      grant: opts.approve ? opts.grant : undefined,
     });
     return { ok: true };
   }

@@ -54,10 +54,20 @@ export interface Receipt {
   approver?: Approver;
   /** approver's one-line deny reason (additive, v0.3) */
   reason?: string;
+  /** grant minted by this approval (additive, v0.3) */
+  grant?: GrantStamp;
+  /** the standing grant this call executed under (additive, v0.3) */
+  grant_id?: string;
   result?: { status: "ok" | "error"; content_hash: string };
   /** fingerprint of the signing key — verification survives key rotation */
   kid?: string;
   sig: string;
+}
+
+export interface GrantStamp {
+  id: string;
+  scope: { server: string; tool: string };
+  expires_at: string | null;
 }
 
 export interface ReceiptInput {
@@ -69,6 +79,8 @@ export interface ReceiptInput {
   requester?: Requester;
   approver?: Approver;
   reason?: string;
+  grant?: GrantStamp;
+  grant_id?: string;
   result?: { status: "ok" | "error"; content_hash: string };
 }
 
@@ -239,6 +251,8 @@ export class Ledger {
         ...(input.requester ? { requester: input.requester } : {}),
         ...(input.approver ? { approver: input.approver } : {}),
         ...(input.reason ? { reason: input.reason } : {}),
+        ...(input.grant ? { grant: input.grant } : {}),
+        ...(input.grant_id ? { grant_id: input.grant_id } : {}),
         ...(input.result ? { result: input.result } : {}),
         ...(this.signer ? { kid: this.signer.kid } : {}),
       };

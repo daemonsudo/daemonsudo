@@ -24,6 +24,8 @@ export interface GateConfig {
     host: string;
     port: number;
   };
+  /** grants.max_ttl clamp for approve-with-grant TTLs (default 8h) */
+  grantsMaxTtlMs: number;
   /** sha256 of the gate.yaml bytes in force — stamped on every receipt */
   gateHash: string;
   /** opt-in weekly ping of {version, anon_id} — default off */
@@ -94,6 +96,9 @@ export function loadConfig(path?: string): GateConfig {
       host: String(web.host ?? "127.0.0.1"),
       port: web.port === undefined ? 4910 : Number(web.port),
     },
+    grantsMaxTtlMs: parseDuration(
+      ((raw.grants as Record<string, unknown> | undefined)?.max_ttl as string | number) ?? "8h",
+    ),
     gateHash,
     telemetry: raw.telemetry === true,
   };

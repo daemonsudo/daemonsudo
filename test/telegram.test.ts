@@ -94,6 +94,32 @@ describe("telegram channel", () => {
     db.close();
   });
 
+  test("grant buttons only on mcp-origin cards; g15 carries grant intent", async () => {
+    const { db, broker, channel, calls } = await setup();
+    const mcp = broker.park({ server: "m", tool: "delete_thing", args: {}, rule: "delete_*: approve", origin: "mcp" });
+    await channel.notifyPending(broker.get(mcp.id)!);
+    const mcpKb = (calls.at(-1)!.body.reply_markup as { inline_keyboard: Array<Array<{ callback_data: string }>> })
+      .inline_keyboard.flat().map((b) => b.callback_data.split(":")[0]);
+    expect(mcpKb).toEqual(["a", "g15", "g60", "gs", "d", "r"]);
+
+    const cc = broker.park({ server: "claude-code", tool: "Bash", args: {}, rule: "ask", origin: "cc" });
+    await channel.notifyPending(broker.get(cc.id)!);
+    const ccKb = (calls.at(-1)!.body.reply_markup as { inline_keyboard: Array<Array<{ callback_data: string }>> })
+      .inline_keyboard.flat().map((b) => b.callback_data.split(":")[0]);
+    expect(ccKb).toEqual(["a", "d", "r"]);
+
+    // g15 approves with a 15-minute grant intent
+    await channel.handleUpdate({
+      update_id: 7,
+      callback_query: { id: "cb7", from: { id: 111 }, data: `g15:${mcp.id}:${broker.get(mcp.id)!.nonce}` },
+    });
+    const decision = await mcp.decision;
+    expect(decision.status).toBe("approved");
+    expect(decision.grant).toEqual({ ttlMs: 15 * 60_000 });
+    broker.cancel(cc.id, "test done");
+    db.close();
+  });
+
   test("deny + reason: force-reply prompt, allowed reply carries the reason", async () => {
     const { db, broker, channel, calls } = await setup();
     const parked = broker.park({ server: "m", tool: "send_thing", args: {}, rule: "send_*: approve", origin: "mcp" });

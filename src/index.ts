@@ -8,15 +8,20 @@
  *   daemonsudo init [--preset <name>]                        write a starter gate.yaml
  *   daemonsudo verify [--db path]                            verify the receipt chain
  *   daemonsudo receipts [--db path]                          print recent receipts
+ *   daemonsudo grants [--db path]                            list standing grants
+ *   daemonsudo grant <server> <tool> --ttl 15m|1h|8h         mint a grant (operator-side)
+ *   daemonsudo revoke <grant-id>                             revoke a grant (operator-side)
  */
-import { copyFileSync, existsSync, readdirSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ApprovalBroker } from "./broker.js";
 import { TelegramChannel } from "./channels/telegram.js";
-import { defaultDbPath, loadConfig } from "./config.js";
+import { defaultDbPath, loadConfig, parseDuration } from "./config.js";
 import { DecisionCore } from "./core.js";
 import { openDb, type Db } from "./db.js";
+import { BOOT_ID, createGrantWithReceipt, GrantStore, revokeGrantWithReceipt } from "./grants.js";
 import {
   Ledger,
   loadOrCreateKeys,
@@ -51,7 +56,10 @@ function usage(): never {
       "       daemonsudo hook [--ensure-daemon]\n" +
       `       daemonsudo init [--preset ${presetNames().join("|")}]\n` +
       "       daemonsudo verify [--db path]\n" +
-      "       daemonsudo receipts [--db path]",
+      "       daemonsudo receipts [--db path]\n" +
+      "       daemonsudo grants [--db path]\n" +
+      "       daemonsudo grant <server> <tool> [--ttl 15m|1h|8h] [--db path]\n" +
+      "       daemonsudo revoke <grant-id> [--db path]",
   );
   process.exit(2);
 }
@@ -136,11 +144,124 @@ async function cmdReceipts(args: string[]): Promise<never> {
   process.exit(0);
 }
 
+const DAEMON_BASE = process.env.DAEMONSUDO_BASE_URL ?? "http://127.0.0.1:4910";
+
+function loadServeToken(): string | undefined {
+  const path = process.env.DAEMONSUDO_TOKEN_PATH ?? join(homedir(), ".gate", "serve.token");
+  try {
+    return existsSync(path) ? readFileSync(path, "utf8").trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** POST to a live daemon so it stays the ledger's writer; undefined when it's down. */
+async function daemonPost(path: string, body: unknown): Promise<Response | undefined> {
+  try {
+    const up = await fetch(`${DAEMON_BASE}/health`, { signal: AbortSignal.timeout(1_500) });
+    if (!up.ok) return undefined;
+  } catch {
+    return undefined;
+  }
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  const token = loadServeToken();
+  if (token) headers["x-daemonsudo-token"] = token;
+  return fetch(`${DAEMON_BASE}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
+}
+
+/** Positional args, skipping `--flag value` pairs for the given value-taking flags. */
+function positionalArgs(args: string[], valueFlags: string[]): string[] {
+  return args.filter((a, i) => !a.startsWith("--") && !valueFlags.includes(args[i - 1] ?? ""));
+}
+
+function grantState(g: { revoked_at: string | null; expires_at: string | null }): string {
+  if (g.revoked_at) return `revoked ${g.revoked_at}`;
+  return g.expires_at ? `expires ${g.expires_at}` : "session";
+}
+
+async function cmdGrantsList(args: string[]): Promise<never> {
+  const db = await openDb(dbPathFromFlags(args));
+  const rows = new GrantStore(db).list();
+  if (rows.length === 0) {
+    console.log("no grants.");
+    process.exit(0);
+  }
+  for (const g of rows) {
+    console.log(`${g.id}  ${g.server} ${g.tool}  ${grantState(g)}  by ${g.created_channel}:${g.created_user}`);
+  }
+  process.exit(0);
+}
+
+async function cmdGrantCreate(args: string[]): Promise<never> {
+  const [server, tool] = positionalArgs(args, ["--ttl", "--db"]);
+  if (!server || !tool) usage();
+  const ttlIdx = args.indexOf("--ttl");
+  const ttlMs = parseDuration(ttlIdx !== -1 && args[ttlIdx + 1] ? args[ttlIdx + 1] : "1h");
+  const user = process.env.USER ?? "operator";
+
+  const viaDaemon = await daemonPost("/gate/grants", { server, tool, ttl_ms: ttlMs, user });
+  if (viaDaemon) {
+    const body = (await viaDaemon.json()) as { ok?: boolean; grant?: { id: string; expires_at: string }; error?: string };
+    if (!viaDaemon.ok || !body.grant) {
+      console.error(`daemonsudo: grant failed: ${body.error ?? viaDaemon.status}`);
+      process.exit(1);
+    }
+    console.log(`grant ${body.grant.id} — ${server} ${tool} expires ${body.grant.expires_at} (via daemon)`);
+    process.exit(0);
+  }
+
+  const config = loadConfig();
+  const db = await openDb(dbPathFromFlags(args));
+  const ledger = new Ledger(db, config.redact, makeSigner(loadOrCreateKeys(db)), config.gateHash);
+  const grant = createGrantWithReceipt(new GrantStore(db), ledger, {
+    server,
+    tool,
+    intent: { ttlMs },
+    maxTtlMs: config.grantsMaxTtlMs,
+    bootId: BOOT_ID,
+    channel: "cli",
+    user,
+  });
+  console.log(`grant ${grant.id} — ${server} ${tool} expires ${grant.expires_at}`);
+  process.exit(0);
+}
+
+async function cmdGrantRevoke(args: string[]): Promise<never> {
+  const [id] = positionalArgs(args, ["--db"]);
+  if (!id) usage();
+  const user = process.env.USER ?? "operator";
+
+  const viaDaemon = await daemonPost("/gate/grants/revoke", { id, user });
+  if (viaDaemon) {
+    const body = (await viaDaemon.json()) as { ok?: boolean; error?: string };
+    if (!viaDaemon.ok) {
+      console.error(`daemonsudo: revoke failed: ${body.error ?? viaDaemon.status}`);
+      process.exit(1);
+    }
+    console.log(`revoked ${id} (via daemon)`);
+    process.exit(0);
+  }
+
+  const config = loadConfig();
+  const db = await openDb(dbPathFromFlags(args));
+  const ledger = new Ledger(db, config.redact, makeSigner(loadOrCreateKeys(db)), config.gateHash);
+  const res = revokeGrantWithReceipt(new GrantStore(db), ledger, id, "cli", user);
+  if (!res.ok) {
+    console.error(`daemonsudo: revoke failed: ${res.error}`);
+    process.exit(1);
+  }
+  console.log(`revoked ${id}`);
+  process.exit(0);
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv[0] === "init") return cmdInit(argv.slice(1));
   if (argv[0] === "verify") return cmdVerify(argv.slice(1));
   if (argv[0] === "receipts") return cmdReceipts(argv.slice(1));
+  if (argv[0] === "grants") return cmdGrantsList(argv.slice(1));
+  if (argv[0] === "grant") return cmdGrantCreate(argv.slice(1));
+  if (argv[0] === "revoke") return cmdGrantRevoke(argv.slice(1));
 
   // CC plugin commands — dispatch before flag parsing so they get their own argv.
   if (argv[0] === "serve") {
@@ -186,9 +307,17 @@ async function main(): Promise<void> {
   const rules = new YamlGlobEngine(config.rules, config.defaults);
   const broker = new ApprovalBroker(db, config.timeoutMs);
   broker.recoverStalePending(); // adopt this db: close out a prior gate run's orphans
-  const interceptor = new ToolGate(new DecisionCore(rules, ledger, broker));
+  const grantStore = new GrantStore(db);
+  grantStore.expireStaleSessionGrants(BOOT_ID);
+  const interceptor = new ToolGate(
+    new DecisionCore(rules, ledger, broker, {
+      store: grantStore,
+      bootId: BOOT_ID,
+      maxTtlMs: config.grantsMaxTtlMs,
+    }),
+  );
 
-  const web = await startWeb(broker, ledger, config);
+  const web = await startWeb(broker, ledger, config, undefined, grantStore);
 
   if (config.telegram) {
     const token = process.env[config.telegram.tokenEnv];

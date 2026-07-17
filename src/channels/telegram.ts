@@ -5,8 +5,20 @@
  * (no parse_mode) and truncated: args are untrusted input, never interpreted.
  */
 import type { ApprovalBroker, PendingCall } from "../broker.js";
+import { GRANT_INTENTS } from "../grants.js";
 import type { Channel } from "./channel.js";
 import { renderArgs } from "../web/index.js";
+
+/** Grant buttons appear only on MCP-origin cards (CC has native standing allows). */
+function keyboardFor(p: PendingCall): Array<Array<{ text: string; callback_data: string }>> {
+  const btn = (text: string, act: string) => ({ text, callback_data: `${act}:${p.id}:${p.nonce}` });
+  const rows = [[btn("✅ Approve once", "a")]];
+  if (p.origin === "mcp") {
+    rows.push([btn("✅ 15m", "g15"), btn("✅ 1h", "g60"), btn("✅ session", "gs")]);
+  }
+  rows.push([btn("❌ Deny", "d"), btn("✋ Deny + reason", "r")]);
+  return rows;
+}
 
 export interface TelegramOptions {
   token: string;
@@ -91,13 +103,7 @@ export class TelegramChannel implements Channel {
         this.api("sendMessage", {
           chat_id: user,
           text,
-          reply_markup: {
-            inline_keyboard: [[
-              { text: "✅ Approve", callback_data: `a:${p.id}:${p.nonce}` },
-              { text: "❌ Deny", callback_data: `d:${p.id}:${p.nonce}` },
-              { text: "✋ Deny + reason", callback_data: `r:${p.id}:${p.nonce}` },
-            ]],
-          },
+          reply_markup: { inline_keyboard: keyboardFor(p) },
         }),
       ),
     );
@@ -116,7 +122,8 @@ export class TelegramChannel implements Channel {
       return;
     }
     const [act, id, nonce] = (cq.data ?? "").split(":");
-    if ((act !== "a" && act !== "d" && act !== "r") || !id || !nonce) {
+    const known = act === "a" || act === "d" || act === "r" || act in GRANT_INTENTS;
+    if (!known || !id || !nonce) {
       await answer("malformed callback");
       return;
     }
@@ -125,12 +132,13 @@ export class TelegramChannel implements Channel {
       await answer("reply with the reason…");
       return;
     }
-    const approve = act === "a";
+    const approve = act !== "d";
     const res = this.opts.broker.decide(id, {
       approve,
       channel: "telegram",
       user: String(from),
       nonce,
+      grant: GRANT_INTENTS[act],
     });
     await answer(res.ok ? (approve ? "approved ✓" : "denied ✗") : `failed: ${res.error}`);
     if (res.ok && cq.message) {

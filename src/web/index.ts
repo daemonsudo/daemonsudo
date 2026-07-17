@@ -6,6 +6,7 @@
 import { Hono } from "hono";
 import type { ApprovalBroker, PendingCall } from "../broker.js";
 import type { GateConfig } from "../config.js";
+import { GRANT_INTENTS, revokeGrantWithReceipt, type GrantStore } from "../grants.js";
 import type { Ledger } from "../ledger.js";
 
 export function escapeHtml(s: string): string {
@@ -61,20 +62,27 @@ function page(title: string, body: string): string {
 }
 
 function pendingCard(p: PendingCall, withButtons: boolean, token?: string): string {
+  const form = (action: string, label: string, cls: string, extra = "") =>
+    `<form method="post" action="/approve/${escapeHtml(p.id)}">
+  <input type="hidden" name="t" value="${escapeHtml(token ?? "")}">
+  <input type="hidden" name="action" value="${action}">
+  ${extra}<button class="${cls}" type="submit">${label}</button>
+</form>`;
+  // grant buttons only on MCP-origin cards (CC has native standing allows)
+  const grantForms =
+    p.origin === "mcp"
+      ? form("g15", "Approve 15m", "approve") +
+        form("g60", "Approve 1h", "approve") +
+        form("gs", "Approve session", "approve")
+      : "";
   const buttons =
     withButtons && token
-      ? `<p>
-<form method="post" action="/approve/${escapeHtml(p.id)}">
-  <input type="hidden" name="t" value="${escapeHtml(token)}">
-  <input type="hidden" name="action" value="approve">
-  <button class="approve" type="submit">Approve</button>
-</form>
-<form method="post" action="/approve/${escapeHtml(p.id)}">
-  <input type="hidden" name="t" value="${escapeHtml(token)}">
-  <input type="hidden" name="action" value="deny">
-  <input type="text" name="reason" maxlength="300" placeholder="reason (optional)">
-  <button class="deny" type="submit">Deny</button>
-</form></p>`
+      ? `<p>${form("approve", "Approve once", "approve")}${grantForms}${form(
+          "deny",
+          "Deny",
+          "deny",
+          `<input type="text" name="reason" maxlength="300" placeholder="reason (optional)">\n  `,
+        )}</p>`
       : "";
   return `<div class="card">
 <p><strong>${escapeHtml(p.tool)}</strong> <span class="muted">on ${escapeHtml(p.server)}</span></p>
@@ -83,7 +91,12 @@ function pendingCard(p: PendingCall, withButtons: boolean, token?: string): stri
 ${buttons}</div>`;
 }
 
-export function createWebApp(broker: ApprovalBroker, ledger: Ledger, register?: (app: Hono) => void): Hono {
+export function createWebApp(
+  broker: ApprovalBroker,
+  ledger: Ledger,
+  register?: (app: Hono) => void,
+  grants?: GrantStore,
+): Hono {
   const app = new Hono();
   // Extra routes registered before the built-in ones (e.g. /gate/* for the CC door).
   register?.(app);
@@ -102,12 +115,20 @@ export function createWebApp(broker: ApprovalBroker, ledger: Ledger, register?: 
     const id = c.req.param("id");
     const form = await c.req.parseBody();
     const token = typeof form.t === "string" ? form.t : "";
-    const approve = form.action === "approve";
+    const action = typeof form.action === "string" ? form.action : "";
+    const approve = action === "approve" || action in GRANT_INTENTS;
     const reason =
       !approve && typeof form.reason === "string" && form.reason.trim()
         ? form.reason.trim().slice(0, 300)
         : undefined;
-    const res = broker.decide(id, { approve, channel: "web", user: "web", token, reason });
+    const res = broker.decide(id, {
+      approve,
+      channel: "web",
+      user: "web",
+      token,
+      reason,
+      grant: GRANT_INTENTS[action],
+    });
     if (!res.ok) return c.html(page("approval", `<p class="bad">✗ ${escapeHtml(res.error ?? "failed")}</p>`), 400);
     return c.html(
       page(
@@ -125,6 +146,48 @@ export function createWebApp(broker: ApprovalBroker, ledger: Ledger, register?: 
       : "<p class='muted'>nothing pending.</p>";
     return c.html(page(`pending (${items.length})`, body));
   });
+
+  if (grants) {
+    app.get("/grants", (c) => {
+      const rows = grants
+        .list()
+        .map((g) => {
+          const state = g.revoked_at
+            ? `revoked ${escapeHtml(g.revoked_at)}`
+            : g.expires_at
+              ? `expires ${escapeHtml(g.expires_at)}`
+              : "session";
+          const revokeForm = g.revoked_at
+            ? ""
+            : `<form method="post" action="/grants/revoke">
+<input type="hidden" name="id" value="${escapeHtml(g.id)}">
+<button class="deny" type="submit">Revoke</button></form>`;
+          return `<tr>
+<td><strong>${escapeHtml(g.tool)}</strong><br><span class="muted">${escapeHtml(g.server)}</span></td>
+<td class="${g.revoked_at ? "bad" : "ok"}">${state}</td>
+<td class="muted">${escapeHtml(g.created_channel)}:${escapeHtml(g.created_user)}<br>${escapeHtml(g.created_at)}</td>
+<td class="muted">${escapeHtml(g.id.slice(-8))}</td>
+<td>${revokeForm}</td>
+</tr>`;
+        })
+        .join("");
+      return c.html(
+        page(
+          "grants",
+          `<p class="muted">standing approvals — one knock per permission, not per call</p>
+<table><tr><th>scope</th><th>state</th><th>created</th><th>id</th><th></th></tr>${rows}</table>`,
+        ),
+      );
+    });
+
+    app.post("/grants/revoke", async (c) => {
+      const form = await c.req.parseBody();
+      const id = typeof form.id === "string" ? form.id : "";
+      const res = revokeGrantWithReceipt(grants, ledger, id, "web", "web");
+      if (!res.ok) return c.html(page("grants", `<p class="bad">✗ ${escapeHtml(res.error ?? "failed")}</p>`), 400);
+      return c.redirect("/grants");
+    });
+  }
 
   app.get("/receipts", (c) => {
     const receipts = ledger.list(200);
@@ -167,8 +230,9 @@ export async function startWeb(
   ledger: Ledger,
   config: GateConfig,
   register?: (app: Hono) => void,
+  grants?: GrantStore,
 ): Promise<WebChannel | undefined> {
-  const app = createWebApp(broker, ledger, register);
+  const app = createWebApp(broker, ledger, register, grants);
   const { host, port } = config.web;
   const baseUrl = `http://${host}:${port}`;
   try {

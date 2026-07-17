@@ -19,6 +19,7 @@ import { ApprovalBroker, type BrokerDecision } from "./broker.js";
 import { TelegramChannel } from "./channels/telegram.js";
 import { defaultDbPath, loadConfig } from "./config.js";
 import { DecisionCore } from "./core.js";
+import { BOOT_ID, createGrantWithReceipt, GrantStore, revokeGrantWithReceipt } from "./grants.js";
 import { openDb } from "./db.js";
 import {
   Ledger,
@@ -74,7 +75,12 @@ export async function runServe(configPath?: string): Promise<void> {
 
   const ledger = new Ledger(db, config.redact, makeSigner(loadOrCreateKeys(db)), config.gateHash);
   const broker = new ApprovalBroker(db, config.timeoutMs);
-  const core = new DecisionCore(new YamlGlobEngine(config.rules, config.defaults), ledger, broker);
+  const grants = new GrantStore(db);
+  const core = new DecisionCore(new YamlGlobEngine(config.rules, config.defaults), ledger, broker, {
+    store: grants,
+    bootId: BOOT_ID,
+    maxTtlMs: config.grantsMaxTtlMs,
+  });
 
   // Approved-call stash: keyed by (session, tool, input-hash). In-memory with TTL.
   const stash = new Map<string, StashEntry>();
@@ -195,9 +201,53 @@ export async function runServe(configPath?: string): Promise<void> {
       }
       return c.json({ ok: true });
     });
+
+    // Grants CLI → daemon: the daemon stays the ledger's single writer.
+    app.post("/gate/grants", async (c) => {
+      if (!checkToken(c.req.header("x-daemonsudo-token"), token)) {
+        return c.json({ error: "unauthorized" }, 401);
+      }
+      let body: { server: string; tool: string; ttl_ms?: number; session?: boolean; user?: string };
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: "bad json" }, 400);
+      }
+      if (!body.server || !body.tool) return c.json({ error: "server and tool required" }, 400);
+      const intent = body.session
+        ? { session: true as const }
+        : { ttlMs: Number(body.ttl_ms) };
+      if (!("session" in intent) && (!Number.isFinite(intent.ttlMs) || intent.ttlMs <= 0)) {
+        return c.json({ error: "ttl_ms must be a positive number (or pass session: true)" }, 400);
+      }
+      const grant = createGrantWithReceipt(grants, ledger, {
+        server: body.server,
+        tool: body.tool,
+        intent,
+        maxTtlMs: config.grantsMaxTtlMs,
+        bootId: BOOT_ID,
+        channel: "cli",
+        user: body.user ?? "operator",
+      });
+      return c.json({ ok: true, grant: { id: grant.id, expires_at: grant.expires_at } });
+    });
+
+    app.post("/gate/grants/revoke", async (c) => {
+      if (!checkToken(c.req.header("x-daemonsudo-token"), token)) {
+        return c.json({ error: "unauthorized" }, 401);
+      }
+      let body: { id: string; user?: string };
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: "bad json" }, 400);
+      }
+      const res = revokeGrantWithReceipt(grants, ledger, body.id ?? "", "cli", body.user ?? "operator");
+      return res.ok ? c.json({ ok: true }) : c.json({ error: res.error }, 400);
+    });
   }
 
-  const web = await startWeb(broker, ledger, config, register);
+  const web = await startWeb(broker, ledger, config, register, grants);
   if (!web) {
     // For `serve`, the HTTP port is the only interface — can't run without it.
     console.error(
@@ -210,6 +260,7 @@ export async function runServe(configPath?: string): Promise<void> {
   // out approvals orphaned by a previous daemon; a doomed second `serve` exits
   // above before reaching this, leaving a live daemon's pending queue intact.
   broker.recoverStalePending();
+  grants.expireStaleSessionGrants(BOOT_ID);
 
   if (config.telegram) {
     const tgToken = process.env[config.telegram.tokenEnv];

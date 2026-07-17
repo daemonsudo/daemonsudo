@@ -6,11 +6,19 @@
  * receipt is written here exactly once; an executed call's receipt is written
  * by the door via the outcome's recordResult closure, once the result exists.
  */
+import { ulid } from "ulid";
 import type { ApprovalBroker, Origin, ParkedCall } from "./broker.js";
-import type { Approver, Ledger, Requester } from "./ledger.js";
+import { expiresAtFor, type GrantIntent, type GrantStore } from "./grants.js";
+import type { Approver, GrantStamp, Ledger, Requester } from "./ledger.js";
 import type { RuleEngine } from "./rules.js";
 
 export type { Origin };
+
+export interface GrantContext {
+  store: GrantStore;
+  bootId: string;
+  maxTtlMs: number;
+}
 
 export interface CoreCall {
   server: string;
@@ -25,6 +33,8 @@ export interface ExecuteOutcome {
   decision: "auto" | "approved";
   rule: string;
   approver?: Approver;
+  /** set when the call executes under a standing grant */
+  grantId?: string;
   /** Write the execution receipt — call once, after the downstream result. */
   recordResult(result: { status: "ok" | "error"; content_hash: string }): void;
 }
@@ -48,6 +58,7 @@ export class DecisionCore {
     private rules: RuleEngine,
     private ledger: Ledger,
     private broker?: ApprovalBroker,
+    private grants?: GrantContext,
   ) {}
 
   async evaluate(
@@ -63,6 +74,20 @@ export class DecisionCore {
     if (match.action === "deny") {
       this.terminalReceipt(call, "denied", match.rule);
       return { kind: "block", decision: "denied", rule: match.rule, blockedBy: "rule", elapsedMs: 0 };
+    }
+
+    // approve → standing grant check (MCP door only; deny rules already won above)
+    if (call.origin === "mcp" && this.grants) {
+      const grant = this.grants.store.findActive(call.server, call.tool, new Date(), this.grants.bootId);
+      if (grant) {
+        return this.executeOutcome(
+          call,
+          "approved",
+          match.rule,
+          { channel: grant.created_channel, user: grant.created_user, latency_ms: 0 },
+          { id: grant.id },
+        );
+      }
     }
 
     // approve — fail closed when no broker can park the call
@@ -84,11 +109,13 @@ export class DecisionCore {
     const elapsedMs = Date.now() - parkedAt;
 
     if (decision.status === "approved") {
-      return this.executeOutcome(call, "approved", match.rule, {
+      const approver = {
         channel: decision.channel ?? "unknown",
         user: decision.user ?? "unknown",
         latency_ms: elapsedMs,
-      });
+      };
+      const grantIntent = call.origin === "mcp" && this.grants ? decision.grant : undefined;
+      return this.executeOutcome(call, "approved", match.rule, approver, grantIntent && { intent: grantIntent });
     }
 
     const terminal = decision.status === "timeout" ? "timeout" : "denied";
@@ -127,15 +154,30 @@ export class DecisionCore {
     decision: "auto" | "approved",
     rule: string,
     approver?: Approver,
+    grant?: { intent: GrantIntent } | { id: string },
   ): ExecuteOutcome {
+    // A grant minted by this approval is stamped on the receipt and only
+    // becomes a row once the receipt exists (its receipt_id anchor). The row
+    // insert sits outside the receipt's txn: a crash between them loses only
+    // the row, so the next call parks again — fails closed, never open.
+    let grantStamp: GrantStamp | undefined;
+    if (grant && "intent" in grant && this.grants) {
+      grantStamp = {
+        id: ulid(),
+        scope: { server: call.server, tool: call.tool },
+        expires_at: expiresAtFor(grant.intent, this.grants.maxTtlMs),
+      };
+    }
+    const grantId = grant && "id" in grant ? grant.id : undefined;
     return {
       kind: "execute",
       decision,
       rule,
       approver,
+      grantId,
       recordResult: (result) => {
         try {
-          this.ledger.append({
+          const receipt = this.ledger.append({
             server: call.server,
             tool: call.tool,
             args: call.args,
@@ -143,8 +185,22 @@ export class DecisionCore {
             decision,
             rule,
             approver,
+            grant: grantStamp,
+            grant_id: grantId,
             result,
           });
+          if (grantStamp && this.grants) {
+            this.grants.store.create({
+              id: grantStamp.id,
+              server: call.server,
+              tool: call.tool,
+              expiresAt: grantStamp.expires_at,
+              sessionBoot: grantStamp.expires_at === null ? this.grants.bootId : null,
+              channel: approver?.channel ?? "unknown",
+              user: approver?.user ?? "unknown",
+              receiptId: receipt.id,
+            });
+          }
         } catch (e) {
           // The call already executed; a receipt failure here is logged loudly
           // but must not turn a true result into a lie.
