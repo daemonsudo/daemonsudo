@@ -1,6 +1,6 @@
 {
   "name": "daemonsudo",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "sudo for AI agents — remote approval + signed receipts for MCP and Claude Code tool calls",
   "license": "MIT",
   "type": "module",

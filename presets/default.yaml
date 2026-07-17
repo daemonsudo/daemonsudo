@@ -22,7 +22,18 @@ channels:
   # telegram:
   #   token_env: GATE_TELEGRAM_TOKEN   # env var NAME — the token never lives here
   #   allowed_users: [123456789]
+  # discord:
+  #   token_env: GATE_DISCORD_TOKEN
+  #   allowed_users: ["123456789012345678"]   # snowflakes are STRINGS
   web:
     port: 4910
+
+# grants:                # approve once, allow (server, tool) for a while:
+#   max_ttl: 8h          # the card offers once / 15m / 1h / session; TTLs clamp here
+                         # manage with: daemonsudo grants · revoke <id> · the /grants page
+
+# mirror:                # stream signed head checkpoints off-box; the mirror witnesses
+#   url: http://backup-host:4930           # your `daemonsudo mirror --listen` receiver
+#   token_env: DAEMONSUDO_MIRROR_TOKEN     # then audit with: daemonsudo verify --against <url|file>
 
 # telemetry: true        # opt-in weekly ping of {version, anon_id} — nothing else, ever

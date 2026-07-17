@@ -9,7 +9,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openDb, type Db } from "../src/db.js";
-import { connectThroughGate, MOCK, ROOT, spawnServe, tmpDir } from "./helpers.js";
+import { connectThroughGate, GATE_CMD, MOCK, spawnServe, tmpDir } from "./helpers.js";
 
 const BASE = "http://127.0.0.1:14921";
 
@@ -93,8 +93,8 @@ test("(c) proxy SIGKILLed mid-park → daemon cancels the pending row", async ()
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
   const transport = new StdioClientTransport({
-    command: "bun",
-    args: [join(ROOT, "src", "index.ts"), "--", ...MOCK],
+    command: GATE_CMD[0],
+    args: [...GATE_CMD.slice(1), "--", ...MOCK],
     env: { ...env, DAEMONSUDO_REMOTE_URL: BASE, DAEMONSUDO_TOKEN_PATH: tokenPath, MOCK_LOG: mockLog },
     stderr: "inherit",
   });

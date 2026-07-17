@@ -9,7 +9,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openDb, type Db } from "../src/db.js";
 import { makeVerifier, verifyChain, type Receipt } from "../src/ledger.js";
-import { connectThroughGate, ROOT, tmpDir } from "./helpers.js";
+import { connectThroughGate, GATE_CMD, ROOT, tmpDir } from "./helpers.js";
 
 const WEB = "http://127.0.0.1:14917";
 
@@ -70,7 +70,7 @@ test("grant lifecycle: approve-with-grant → silent second call → revoke → 
 
   // 3. CLI revoke — daemon probe fails (dead port) → direct-DB path, a second ledger writer
   const revoke = Bun.spawnSync(
-    ["bun", join(ROOT, "src", "index.ts"), "revoke", grantId, "--db", dbPath],
+    [...GATE_CMD, "revoke", grantId, "--db", dbPath],
     { env: { ...process.env, DAEMONSUDO_DB: dbPath, DAEMONSUDO_BASE_URL: "http://127.0.0.1:14999" } },
   );
   expect(revoke.exitCode).toBe(0);

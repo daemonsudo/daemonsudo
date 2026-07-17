@@ -238,6 +238,18 @@ export async function listenOn(app: Hono, host: string, port: number): Promise<(
   }
   const { serve } = await import("@hono/node-server");
   const server = serve({ fetch: app.fetch, hostname: host, port });
+  // Node reports EADDRINUSE asynchronously — await the bind so a taken port
+  // THROWS here like it does on Bun. A second daemon must die before it can
+  // touch shared state (recoverStalePending), not after.
+  // Detach the sibling listener once one side fires: a leftover 'error'
+  // listener would silently swallow later runtime errors on the socket.
+  await new Promise<void>((resolve, reject) => {
+    const net = server as unknown as import("node:net").Server;
+    const onListening = () => { net.off("error", onError); resolve(); };
+    const onError = (err: Error) => { net.off("listening", onListening); reject(err); };
+    net.once("listening", onListening);
+    net.once("error", onError);
+  });
   // Disable Node's default timeouts so /gate/approve can block for 9+ minutes.
   (server as { requestTimeout?: number; timeout?: number }).requestTimeout = 0;
   (server as { requestTimeout?: number; timeout?: number }).timeout = 0;

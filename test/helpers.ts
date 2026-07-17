@@ -7,6 +7,20 @@ import { join } from "node:path";
 export const ROOT = join(import.meta.dir, "..");
 export const MOCK = ["node", join(ROOT, "examples", "mock-server.mjs")];
 
+/**
+ * How tests spawn daemonsudo processes. Default: Bun straight from src/.
+ * Set DAEMONSUDO_TEST_RUNTIME=/path/to/node (≥24) to run them as
+ * `node dist/*.js` instead — the runtime-portability suite run (build first:
+ * the node:sqlite branch then carries migrations/grants/remote end to end).
+ */
+const RUNTIME = process.env.DAEMONSUDO_TEST_RUNTIME;
+export const GATE_CMD: string[] = RUNTIME
+  ? [RUNTIME, join(ROOT, "dist", "index.js")]
+  : ["bun", join(ROOT, "src", "index.ts")];
+export const HOOK_CMD: string[] = RUNTIME
+  ? [RUNTIME, join(ROOT, "dist", "hook.js")]
+  : ["bun", join(ROOT, "src", "hook.ts")];
+
 export function tmpDir(): string {
   return mkdtempSync(join(tmpdir(), "daemonsudo-test-"));
 }
@@ -42,7 +56,7 @@ export async function spawnServe(opts: {
 }): Promise<{ kill(signal?: number | NodeJS.Signals): void }> {
   const configPath = join(tmpDir(), "gate.yaml");
   writeFileSync(configPath, opts.configYaml);
-  const proc = Bun.spawn(["bun", join(ROOT, "src", "index.ts"), "serve", "--config", configPath], {
+  const proc = Bun.spawn([...GATE_CMD, "serve", "--config", configPath], {
     env: cleanEnv({
       DAEMONSUDO_DB: opts.db,
       DAEMONSUDO_TOKEN_PATH: opts.tokenPath,
@@ -71,11 +85,11 @@ export async function connectThroughGate(opts: {
   env?: Record<string, string>;
 } = {}): Promise<Client> {
   const client = new Client({ name: "test-client", version: "0.0.0" });
-  const gateArgs = [join(ROOT, "src", "index.ts")];
+  const gateArgs = GATE_CMD.slice(1);
   if (opts.config) gateArgs.push("--config", opts.config);
   gateArgs.push("--", ...MOCK);
   const transport = new StdioClientTransport({
-    command: "bun",
+    command: GATE_CMD[0],
     args: gateArgs,
     env: cleanEnv(opts.env ?? {}),
     stderr: "inherit",

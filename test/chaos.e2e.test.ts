@@ -7,7 +7,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ApprovalBroker } from "../src/broker.js";
 import { openDb } from "../src/db.js";
-import { MOCK, ROOT, tmpDir } from "./helpers.js";
+import { GATE_CMD, MOCK, ROOT, tmpDir } from "./helpers.js";
 
 describe("chaos: gate killed mid-approval", () => {
   test("parked call never executes — before or after restart", async () => {
@@ -19,9 +19,9 @@ describe("chaos: gate killed mid-approval", () => {
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
     const transport = new StdioClientTransport({
-      command: "bun",
+      command: GATE_CMD[0],
       args: [
-        join(ROOT, "src", "index.ts"),
+        ...GATE_CMD.slice(1),
         "--config", join(ROOT, "test", "fixtures", "chaos.yaml"),
         "--", ...MOCK,
       ],

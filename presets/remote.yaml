@@ -1,0 +1,23 @@
+# daemonsudo preset: remote-broker mode (v0.3) — the CONTAINER side.
+#
+# In split topology the agent's container runs only a dumb forwarding proxy;
+# the HOST daemon owns gate.yaml rules, grants, signing keys, and the ledger.
+# The container can only *ask*. If the daemon is unreachable, EVERYTHING
+# fails closed — including calls that would have been `auto`.
+#
+# Host setup (the other half of this recipe): docs/split-topology.md —
+# run `daemonsudo serve` there with:
+#
+#   gate:
+#     listen: { host: 172.17.0.1, port: 4911 }   # docker bridge, token-authed
+#
+# Container wiring:
+#   DAEMONSUDO_REMOTE_URL=http://host.docker.internal:4911   (env wins over this file)
+#   DAEMONSUDO_TOKEN=<the host's serve token>                (or mount it and set DAEMONSUDO_TOKEN_PATH)
+#   extra_hosts: ["host.docker.internal:host-gateway"]       (required on Linux)
+
+remote:
+  url: http://host.docker.internal:4911
+
+# No rules/redact/channels here — policy lives on the host. Anything else in
+# this file is ignored in remote mode.

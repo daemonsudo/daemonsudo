@@ -20,6 +20,7 @@ import {
   verifyChain,
   type Receipt,
 } from "../src/ledger.js";
+import { GATE_CMD } from "./helpers.js";
 
 const PORT = 14914;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -52,7 +53,7 @@ function postHook(path: string, body: unknown, token: string) {
 
 beforeAll(async () => {
   serve = Bun.spawn(
-    ["bun", join(ROOT, "src", "index.ts"), "serve", "--config", join(ROOT, "presets", "claude-code.yaml")],
+    [...GATE_CMD, "serve", "--config", join(ROOT, "presets", "claude-code.yaml")],
     {
       env: {
         ...process.env,
@@ -77,7 +78,7 @@ beforeAll(async () => {
   writeFileSync(configPath, `timeout: 9m\nredact: ["*.token"]\nchannels:\n  web:\n    host: "127.0.0.1"\n    port: ${PORT}\n`);
 
   serve = Bun.spawn(
-    ["bun", join(ROOT, "src", "index.ts"), "serve", "--config", configPath],
+    [...GATE_CMD, "serve", "--config", configPath],
     {
       env: { ...process.env, DAEMONSUDO_DB: TEST_DB, DAEMONSUDO_TOKEN_PATH: TEST_TOKEN_PATH },
       stderr: "pipe",
@@ -269,7 +270,7 @@ describe("cc-serve /gate/approve + /gate/receipt", () => {
     // Launch a second serve against the same port + same db. It must lose the
     // port bind and exit non-zero — without running the pending-recovery sweep.
     const second = Bun.spawn(
-      ["bun", join(ROOT, "src", "index.ts"), "serve", "--config", configPath],
+      [...GATE_CMD, "serve", "--config", configPath],
       { env: { ...process.env, DAEMONSUDO_DB: TEST_DB, DAEMONSUDO_TOKEN_PATH: TEST_TOKEN_PATH }, stderr: "pipe", stdout: "pipe" },
     );
     const exitCode = await second.exited;

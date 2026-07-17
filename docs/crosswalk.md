@@ -8,6 +8,12 @@ W3C VC envelope. The schemas align where they overlap; both canonicalize with
 **RFC 8785 (JCS)** and prefix hashes with `sha256:`. A lossless
 receipt → ARP-VC converter is a possible v2.
 
+**Extensibility:** `daemonsudo/v1` is *additively extensible* — consumers MUST
+ignore unknown fields. "Frozen" means the fields below never change meaning or
+disappear, not that the set is closed: v0.3 added optional `reason`,
+`grant:{id,scope,expires_at}`, and `grant_id` without a version bump, and
+`verifyChain` deliberately never validates a closed field set.
+
 | daemonsudo/v1 | ARP (v0.5.0 draft) | notes |
 |---|---|---|
 | `schema` | `@context` / VC `type` | flat string vs JSON-LD envelope |

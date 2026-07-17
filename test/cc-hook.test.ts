@@ -9,8 +9,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test
 import { writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-const ROOT = join(import.meta.dir, "..");
+import { HOOK_CMD } from "./helpers.js";
 
 // Pinned to a unique port so parallel test files don't collide.
 const MOCK_PORT = 14915;
@@ -74,7 +73,7 @@ async function runHook(
   input: unknown,
   env: Record<string, string> = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  const proc = Bun.spawn(["bun", join(ROOT, "src", "hook.ts")], {
+  const proc = Bun.spawn(HOOK_CMD, {
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",

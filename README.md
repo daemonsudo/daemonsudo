@@ -92,9 +92,24 @@ When a call matches `approve`, the agent's request is held open and the gate pri
 daemonsudo: approval needed → http://127.0.0.1:4910/approve/01JX…?t=9f2c…
 ```
 
-The card shows the tool, the server, the rule that fired, and the args — escaped, truncated, never interpreted (args are attacker-controlled input; the card treats them that way). Approve and the call executes; deny — or let it time out — and the agent gets a clean in-band tool error it can read and react to.
+The card shows the tool, the server, the rule that fired, and the args — escaped, truncated, never interpreted (args are attacker-controlled input; the card treats them that way). Approve and the call executes; deny — or let it time out — and the agent gets a clean in-band tool error it can read and react to. Type an optional one-line **deny reason** and it rides along in-band, so the agent can route around the refusal instead of retry-thrashing; the reason also lands on the signed receipt. (Claude Code door: the hook returns the reason as the top-level `reason` field, which Claude Code shows the model — confirmed against the current PermissionRequest hook docs.)
+
+On MCP cards the approve button comes in four sizes — **once / 15m / 1h / session**. The timed ones mint a **standing grant** scoped to exactly that (server, tool): later matching calls execute without knocking, every one receipted with the `grant_id` and the original approver. Grants never override an explicit `deny` rule, TTLs clamp to `grants.max_ttl` (default 8h), "session" dies with the gate process. Inspect and revoke at `/grants`, or operator-side: `daemonsudo grants` / `daemonsudo revoke <id>` — creation and revocation each leave their own receipt.
 
 Telegram setup: make a bot with [@BotFather](https://t.me/botfather), put the token in `GATE_TELEGRAM_TOKEN`, message your bot once, and put your user ID in `allowed_users`. Long-polling — works behind NAT, no webhook, no public URL.
+
+Discord setup: create a bot in the [developer portal](https://discord.com/developers/applications), put its token in `GATE_DISCORD_TOKEN`, and list the user IDs (as **strings**) in `channels.discord.allowed_users`. Cards arrive as DMs with the same buttons; "✋ Deny + reason" opens a modal.
+
+## The agent in a box, the keys outside it
+
+Run the agent in a container and it can read `serve.token` and the signing keys — the gate becomes a tripwire it can walk around. **Split topology** moves policy, keys, and the ledger to a host daemon; the container only asks:
+
+- **Claude Code door:** point the hooks at the host with `DAEMONSUDO_BASE_URL` + `DAEMONSUDO_TOKEN` (direct env value; beats `DAEMONSUDO_TOKEN_PATH`).
+- **MCP door:** run the in-container proxy in **remote-broker mode** (`daemonsudo init --preset remote`, or `DAEMONSUDO_REMOTE_URL`). The host daemon runs rules → grants → park and writes every receipt. Daemon unreachable? **Everything fails closed — `auto` included.**
+
+The daemon's `gate.listen` opens a second, token-authed listener (only `/health` + `/gate/*` — operator pages never mount there) to bind on the docker bridge. Full recipe: [docs/split-topology.md](docs/split-topology.md).
+
+And because the box holds the ledger next to the key holder, v0.3 adds an off-box witness: point `mirror.url` at a `daemonsudo mirror --listen` receiver anywhere else, and every signed head checkpoint streams there (never blocking receipt writes). `daemonsudo verify --against <url|file>` then catches what local verify can't — a key holder truncating or rewriting history and re-signing a fresh head.
 
 ## auth.log, but signed
 
@@ -115,9 +130,10 @@ Browse it at `http://127.0.0.1:4910/receipts`.
 ## Security model
 
 - **Fail closed.** Gate crash, dead DB, ambiguous state — calls matching `approve`/`deny` do not reach the server. Pendings orphaned by a crash are closed out on restart, never executed. Only `auto` passthrough may degrade gracefully.
-- **Untrusted args.** Approval cards render args as inert, escaped, truncated text — web and Telegram both. Prompt injection in tool args has nowhere to go.
-- **Capability auth.** Web approvals require the per-call token from the link; Telegram callbacks carry a one-time nonce and are accepted only from `allowed_users`. The web server binds to localhost by default.
+- **Untrusted args.** Approval cards render args as inert, escaped, truncated text — web, Telegram, and Discord alike. Prompt injection in tool args has nowhere to go.
+- **Capability auth.** Web approvals require the per-call token from the link; Telegram/Discord buttons carry a one-time nonce and are accepted only from `allowed_users`. The web server binds to localhost by default; the optional `gate.listen` listener is token-authed on every route except `/health` and never serves operator pages.
 - **No secrets in the ledger or notifications** — see `redact` above.
+- **Split topology is honest about its boundary.** The *decision* is enforced host-side; the result the container reports back is tripwire-grade evidence, not proof (a compromised container could lie about what it ran). What it cannot do is execute a gated call without a host-side yes — or hide that a call happened, once the mirror has witnessed the head.
 
 ## Requirements
 
@@ -158,7 +174,7 @@ That is the entire payload — nothing about your tools, rules, args, or traffic
 
 Demand-driven — 👍 an issue to vote it up:
 
-- [Slack & Discord approval channels](https://github.com/daemonsudo/daemonsudo/issues/1)
+- ~~Discord approval channel~~ — shipped in 0.3 ([#1](https://github.com/daemonsudo/daemonsudo/issues/1); Slack still open there)
 - [More rule presets — which servers?](https://github.com/daemonsudo/daemonsudo/issues/3)
 
 ---
