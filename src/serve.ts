@@ -14,6 +14,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { Hono } from "hono";
 import { ulid } from "ulid";
 import { ApprovalBroker, type BrokerDecision } from "./broker.js";
+import { DiscordChannel } from "./channels/discord.js";
 import { TelegramChannel } from "./channels/telegram.js";
 import { defaultDbPath, loadConfig } from "./config.js";
 import { DecisionCore, type ExecutionResult } from "./core.js";
@@ -375,6 +376,22 @@ export async function runServe(configPath?: string): Promise<void> {
       new TelegramChannel({
         token: tgToken,
         allowedUsers: config.telegram.allowedUsers,
+        broker,
+        webBaseUrl: web.baseUrl,
+      }).start();
+    }
+  }
+
+  if (config.discord) {
+    const dcToken = process.env[config.discord.tokenEnv];
+    if (!dcToken) {
+      console.error(`daemonsudo serve: ${config.discord.tokenEnv} not set — Discord disabled`);
+    } else if (config.discord.allowedUsers.length === 0) {
+      console.error("daemonsudo serve: no discord.allowed_users — Discord disabled");
+    } else {
+      new DiscordChannel({
+        token: dcToken,
+        allowedUsers: config.discord.allowedUsers,
         broker,
         webBaseUrl: web.baseUrl,
       }).start();

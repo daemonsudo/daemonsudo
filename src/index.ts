@@ -17,6 +17,7 @@ import { copyFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ApprovalBroker } from "./broker.js";
+import { DiscordChannel } from "./channels/discord.js";
 import { TelegramChannel } from "./channels/telegram.js";
 import { defaultDbPath, loadConfig, parseDuration } from "./config.js";
 import { DecisionCore } from "./core.js";
@@ -406,6 +407,24 @@ async function main(): Promise<void> {
       new TelegramChannel({
         token,
         allowedUsers: config.telegram.allowedUsers,
+        broker,
+        webBaseUrl: web?.baseUrl,
+      }).start();
+    }
+  }
+
+  if (config.discord) {
+    const dcToken = process.env[config.discord.tokenEnv];
+    if (!dcToken) {
+      console.error(
+        `daemonsudo: discord configured but ${config.discord.tokenEnv} is not set — discord channel disabled`,
+      );
+    } else if (config.discord.allowedUsers.length === 0) {
+      console.error("daemonsudo: discord configured without allowed_users — discord channel disabled");
+    } else {
+      new DiscordChannel({
+        token: dcToken,
+        allowedUsers: config.discord.allowedUsers,
         broker,
         webBaseUrl: web?.baseUrl,
       }).start();

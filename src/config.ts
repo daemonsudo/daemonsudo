@@ -20,6 +20,11 @@ export interface GateConfig {
     tokenEnv: string;
     allowedUsers: number[];
   };
+  /** allowed_users are STRINGS — Discord snowflakes exceed 2^53 */
+  discord?: {
+    tokenEnv: string;
+    allowedUsers: string[];
+  };
   web: {
     host: string;
     port: number;
@@ -88,6 +93,7 @@ export function loadConfig(path?: string): GateConfig {
 
   const channels = (raw.channels ?? {}) as Record<string, Record<string, unknown>>;
   const tg = channels.telegram;
+  const dc = channels.discord;
   const web = channels.web ?? {};
   const gateListen = ((raw.gate ?? {}) as Record<string, Record<string, unknown>>).listen;
   const remote = raw.remote as Record<string, unknown> | undefined;
@@ -102,6 +108,13 @@ export function loadConfig(path?: string): GateConfig {
       ? {
           tokenEnv: String(tg.token_env ?? "GATE_TELEGRAM_TOKEN"),
           allowedUsers: ((tg.allowed_users ?? []) as unknown[]).map(Number),
+        }
+      : undefined,
+    discord: dc
+      ? {
+          tokenEnv: String(dc.token_env ?? "GATE_DISCORD_TOKEN"),
+          // String, not Number: snowflakes don't fit in a double
+          allowedUsers: ((dc.allowed_users ?? []) as unknown[]).map(String),
         }
       : undefined,
     web: {

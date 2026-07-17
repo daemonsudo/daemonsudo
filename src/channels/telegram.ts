@@ -5,7 +5,7 @@
  * (no parse_mode) and truncated: args are untrusted input, never interpreted.
  */
 import type { ApprovalBroker, PendingCall } from "../broker.js";
-import { GRANT_INTENTS } from "../grants.js";
+import { GRANT_INTENTS, isKnownAction } from "../grants.js";
 import type { Channel } from "./channel.js";
 import { renderArgs } from "../web/index.js";
 
@@ -122,8 +122,7 @@ export class TelegramChannel implements Channel {
       return;
     }
     const [act, id, nonce] = (cq.data ?? "").split(":");
-    const known = act === "a" || act === "d" || act === "r" || act in GRANT_INTENTS;
-    if (!known || !id || !nonce) {
+    if (!isKnownAction(act) || !id || !nonce) {
       await answer("malformed callback");
       return;
     }

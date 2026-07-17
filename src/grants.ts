@@ -31,12 +31,21 @@ export interface Grant {
 /** A channel's approve-with-grant intent, carried on the broker decision. */
 export type GrantIntent = { ttlMs: number } | { session: true };
 
-/** action key → approve-with-grant intent — shared by the Telegram and web approval UIs */
-export const GRANT_INTENTS: Record<string, GrantIntent> = {
+/**
+ * action key → approve-with-grant intent — shared by the Telegram, Discord,
+ * and web approval UIs. Null prototype: action keys come from user-controlled
+ * callback data, so `in`/lookup must never match Object.prototype keys.
+ */
+export const GRANT_INTENTS: Record<string, GrantIntent> = Object.assign(Object.create(null), {
   g15: { ttlMs: 15 * 60_000 },
   g60: { ttlMs: 60 * 60_000 },
   gs: { session: true },
-};
+});
+
+/** Is this callback/custom_id action prefix one a channel may act on? */
+export function isKnownAction(act: string): boolean {
+  return act === "a" || act === "d" || act === "r" || act in GRANT_INTENTS;
+}
 
 export function clampTtlMs(ttlMs: number, maxTtlMs: number): number {
   return Math.min(ttlMs, maxTtlMs);
