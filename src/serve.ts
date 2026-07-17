@@ -10,10 +10,7 @@
  * crashes between returning allow and the PostToolUse arriving, the stash entry
  * expires and that receipt lands as decision="auto" — accepted for v0.2.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { Hono } from "hono";
 import { ApprovalBroker, type BrokerDecision } from "./broker.js";
 import { TelegramChannel } from "./channels/telegram.js";
@@ -29,7 +26,8 @@ import {
   type Approver,
 } from "./ledger.js";
 import { YamlGlobEngine } from "./rules.js";
-import { startWeb } from "./web/index.js";
+import { loadOrCreateToken, tokenPath } from "./token.js";
+import { createGateApp, listenOn, startWeb } from "./web/index.js";
 
 const STASH_TTL_MS = 15 * 60 * 1000;
 
@@ -45,20 +43,6 @@ function stashKey(sessionId: string, toolName: string, toolInput: unknown): stri
   })();
   const h = createHash("sha256").update(inputJson).digest("hex");
   return `${sessionId}:${toolName}:${h}`;
-}
-
-function tokenPath(): string {
-  return process.env.DAEMONSUDO_TOKEN_PATH ?? join(homedir(), ".gate", "serve.token");
-}
-
-function loadOrCreateToken(): string {
-  const path = tokenPath();
-  if (existsSync(path)) return readFileSync(path, "utf8").trim();
-  const tok = randomBytes(32).toString("hex");
-  const dir = join(homedir(), ".gate");
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
-  writeFileSync(path, tok, { mode: 0o600 });
-  return tok;
 }
 
 function checkToken(provided: string | undefined, expected: string): boolean {
@@ -256,6 +240,23 @@ export async function runServe(configPath?: string): Promise<void> {
     process.exit(1);
   }
 
+  // Optional second listener for the gate API (docker bridge): /health +
+  // /gate/* only. FATAL if it can't bind — a silent fallback to loopback
+  // would fake the security boundary the operator configured.
+  let stopGateListener: (() => void) | undefined;
+  if (config.gateListen) {
+    const { host, port } = config.gateListen;
+    try {
+      stopGateListener = await listenOn(createGateApp(register), host, port);
+      console.error(`daemonsudo serve: gate API listener at http://${host}:${port} (token-authed)`);
+    } catch (e) {
+      console.error(
+        `daemonsudo serve: FATAL — gate.listen ${host}:${port} failed to bind (${e instanceof Error ? e.message : e})`,
+      );
+      process.exit(1);
+    }
+  }
+
   // We won the port bind → we're the sole owner. Only now is it safe to close
   // out approvals orphaned by a previous daemon; a doomed second `serve` exits
   // above before reaching this, leaving a live daemon's pending queue intact.
@@ -287,6 +288,7 @@ export async function runServe(configPath?: string): Promise<void> {
     if (closing) return;
     closing = true;
     web.stop();
+    stopGateListener?.();
     try { db.exec("PRAGMA wal_checkpoint(TRUNCATE);"); } catch {}
     db.close();
     process.exit(0);

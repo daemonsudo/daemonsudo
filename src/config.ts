@@ -24,6 +24,11 @@ export interface GateConfig {
     host: string;
     port: number;
   };
+  /** optional second listener serving ONLY /health + /gate/* (docker bridge) */
+  gateListen?: {
+    host: string;
+    port: number;
+  };
   /** grants.max_ttl clamp for approve-with-grant TTLs (default 8h) */
   grantsMaxTtlMs: number;
   /** sha256 of the gate.yaml bytes in force — stamped on every receipt */
@@ -80,6 +85,7 @@ export function loadConfig(path?: string): GateConfig {
   const channels = (raw.channels ?? {}) as Record<string, Record<string, unknown>>;
   const tg = channels.telegram;
   const web = channels.web ?? {};
+  const gateListen = ((raw.gate ?? {}) as Record<string, Record<string, unknown>>).listen;
 
   return {
     defaults: raw.defaults === undefined ? "approve" : asAction(raw.defaults, "defaults"),
@@ -96,6 +102,12 @@ export function loadConfig(path?: string): GateConfig {
       host: String(web.host ?? "127.0.0.1"),
       port: web.port === undefined ? 4910 : Number(web.port),
     },
+    gateListen: gateListen
+      ? {
+          host: String(gateListen.host ?? "127.0.0.1"),
+          port: gateListen.port === undefined ? 4911 : Number(gateListen.port),
+        }
+      : undefined,
     grantsMaxTtlMs: parseDuration(
       ((raw.grants as Record<string, unknown> | undefined)?.max_ttl as string | number) ?? "8h",
     ),

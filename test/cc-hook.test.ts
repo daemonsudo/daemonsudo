@@ -166,6 +166,19 @@ describe("PermissionRequest", () => {
     });
     expect(lastApproveReq?.headers["x-daemonsudo-token"]).toBe(TOKEN);
   });
+
+  test("DAEMONSUDO_TOKEN (direct value) beats the token file", async () => {
+    await runHook(
+      {
+        hook_event_name: "PermissionRequest",
+        session_id: "s5b",
+        tool_name: "Bash",
+        tool_input: {},
+      },
+      { DAEMONSUDO_TOKEN: "env-injected-token" },
+    );
+    expect(lastApproveReq?.headers["x-daemonsudo-token"]).toBe("env-injected-token");
+  });
 });
 
 describe("PostToolUse / PostToolUseFailure", () => {

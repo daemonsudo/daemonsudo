@@ -13,25 +13,11 @@
  * --ensure-daemon (SessionStart): probes /health; if the daemon is down, spawns
  * `daemonsudo serve` detached via setsid. Exits 0 regardless.
  */
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { loadToken } from "./token.js";
 
 const DAEMON_BASE = process.env.DAEMONSUDO_BASE_URL ?? "http://127.0.0.1:4910";
-
-function tokenPath(): string {
-  return process.env.DAEMONSUDO_TOKEN_PATH ?? join(homedir(), ".gate", "serve.token");
-}
-
-function loadToken(): string | undefined {
-  const path = tokenPath();
-  try {
-    return existsSync(path) ? readFileSync(path, "utf8").trim() : undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 async function postJson(
   path: string,

@@ -3,43 +3,30 @@
  * receipt → CC hook response. Port 14916 (see the port ledger in CLAUDE.md).
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { openDb } from "../src/db.js";
 import { makeVerifier, verifyChain, type Receipt } from "../src/ledger.js";
+import { spawnServe, tmpDir } from "./helpers.js";
 
 const PORT = 14916;
 const BASE = `http://127.0.0.1:${PORT}`;
-const TEST_DB = join(tmpdir(), `daemonsudo-reason-test-${Date.now()}.db`);
-const TEST_TOKEN_PATH = join(tmpdir(), `daemonsudo-reason-test-${Date.now()}.token`);
-const ROOT = join(import.meta.dir, "..");
+const DIR = tmpDir();
+const TEST_DB = join(DIR, "gate.db");
+const TEST_TOKEN_PATH = join(DIR, "serve.token");
 
-let serve: ReturnType<typeof Bun.spawn> | undefined;
+let serve: { kill(): void } | undefined;
 
 beforeAll(async () => {
-  const configPath = join(tmpdir(), `reason-test-config-${Date.now()}.yaml`);
-  writeFileSync(configPath, `timeout: 9m\nchannels:\n  web:\n    host: "127.0.0.1"\n    port: ${PORT}\n`);
-  serve = Bun.spawn(["bun", join(ROOT, "src", "index.ts"), "serve", "--config", configPath], {
-    env: { ...process.env, DAEMONSUDO_DB: TEST_DB, DAEMONSUDO_TOKEN_PATH: TEST_TOKEN_PATH },
-    stderr: "pipe",
-    stdout: "pipe",
+  serve = await spawnServe({
+    configYaml: `timeout: 9m\nchannels:\n  web:\n    host: "127.0.0.1"\n    port: ${PORT}\n`,
+    db: TEST_DB,
+    tokenPath: TEST_TOKEN_PATH,
+    healthUrls: [BASE],
   });
-  const deadline = Date.now() + 6000;
-  while (Date.now() < deadline) {
-    try {
-      if ((await fetch(`${BASE}/health`, { signal: AbortSignal.timeout(500) })).ok) return;
-    } catch {}
-    await new Promise<void>((r) => setTimeout(r, 100));
-  }
-  throw new Error("serve did not become ready");
 });
 
-afterAll(() => {
-  serve?.kill();
-  try { rmSync(TEST_DB, { force: true }); } catch {}
-  try { rmSync(TEST_TOKEN_PATH, { force: true }); } catch {}
-});
+afterAll(() => serve?.kill());
 
 test("web deny with reason → hook response, receipt, and chain all carry it", async () => {
   const token = readFileSync(TEST_TOKEN_PATH, "utf8").trim();

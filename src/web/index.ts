@@ -224,6 +224,36 @@ export interface WebChannel {
   stop(): void;
 }
 
+/** Bind a Hono app; throws when the port is taken. */
+export async function listenOn(app: Hono, host: string, port: number): Promise<() => void> {
+  if (process.versions.bun) {
+    const Bun = (globalThis as Record<string, unknown>).Bun as {
+      serve(opts: unknown): { stop(): void };
+    };
+    // idleTimeout:0 keeps long-held /gate/approve connections alive past Bun's default.
+    const server = Bun.serve({ hostname: host, port, fetch: app.fetch, idleTimeout: 0 });
+    return () => server.stop();
+  }
+  const { serve } = await import("@hono/node-server");
+  const server = serve({ fetch: app.fetch, hostname: host, port });
+  // Disable Node's default timeouts so /gate/approve can block for 9+ minutes.
+  (server as { requestTimeout?: number; timeout?: number }).requestTimeout = 0;
+  (server as { requestTimeout?: number; timeout?: number }).timeout = 0;
+  return () => server.close();
+}
+
+/**
+ * The gate-API app for a second listener (docker bridge): ONLY /health
+ * (tokenless) + the /gate/* routes. Operator pages never appear here —
+ * the topology is the boundary.
+ */
+export function createGateApp(register: (app: Hono) => void): Hono {
+  const app = new Hono();
+  register(app);
+  app.get("/health", (c) => c.json({ ok: true }));
+  return app;
+}
+
 /** Start the approval/receipts server. Returns undefined when the port is taken. */
 export async function startWeb(
   broker: ApprovalBroker,
@@ -236,22 +266,7 @@ export async function startWeb(
   const { host, port } = config.web;
   const baseUrl = `http://${host}:${port}`;
   try {
-    let stop: () => void;
-    if (process.versions.bun) {
-      const Bun = (globalThis as Record<string, unknown>).Bun as {
-        serve(opts: unknown): { stop(): void };
-      };
-      // idleTimeout:0 keeps long-held /gate/approve connections alive past Bun's default.
-      const server = Bun.serve({ hostname: host, port, fetch: app.fetch, idleTimeout: 0 });
-      stop = () => server.stop();
-    } else {
-      const { serve } = await import("@hono/node-server");
-      const server = serve({ fetch: app.fetch, hostname: host, port });
-      // Disable Node's default timeouts so /gate/approve can block for 9+ minutes.
-      (server as { requestTimeout?: number; timeout?: number }).requestTimeout = 0;
-      (server as { requestTimeout?: number; timeout?: number }).timeout = 0;
-      stop = () => server.close();
-    }
+    const stop = await listenOn(app, host, port);
     broker.onPending((p) => {
       console.error(`daemonsudo: approval needed → ${baseUrl}/approve/${p.id}?t=${p.token}`);
     });

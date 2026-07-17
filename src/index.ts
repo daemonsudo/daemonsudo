@@ -12,8 +12,7 @@
  *   daemonsudo grant <server> <tool> --ttl 15m|1h|8h         mint a grant (operator-side)
  *   daemonsudo revoke <grant-id>                             revoke a grant (operator-side)
  */
-import { copyFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { copyFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ApprovalBroker } from "./broker.js";
@@ -32,6 +31,7 @@ import {
 } from "./ledger.js";
 import { GateProxy, ToolGate } from "./proxy.js";
 import { YamlGlobEngine } from "./rules.js";
+import { loadToken } from "./token.js";
 import { maybeSendTelemetryPing } from "./telemetry.js";
 import { startWeb } from "./web/index.js";
 
@@ -146,15 +146,6 @@ async function cmdReceipts(args: string[]): Promise<never> {
 
 const DAEMON_BASE = process.env.DAEMONSUDO_BASE_URL ?? "http://127.0.0.1:4910";
 
-function loadServeToken(): string | undefined {
-  const path = process.env.DAEMONSUDO_TOKEN_PATH ?? join(homedir(), ".gate", "serve.token");
-  try {
-    return existsSync(path) ? readFileSync(path, "utf8").trim() : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /** POST to a live daemon so it stays the ledger's writer; undefined when it's down. */
 async function daemonPost(path: string, body: unknown): Promise<Response | undefined> {
   try {
@@ -164,7 +155,7 @@ async function daemonPost(path: string, body: unknown): Promise<Response | undef
     return undefined;
   }
   const headers: Record<string, string> = { "content-type": "application/json" };
-  const token = loadServeToken();
+  const token = loadToken();
   if (token) headers["x-daemonsudo-token"] = token;
   return fetch(`${DAEMON_BASE}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
 }
