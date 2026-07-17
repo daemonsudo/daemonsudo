@@ -5,6 +5,7 @@
  * (no parse_mode) and truncated: args are untrusted input, never interpreted.
  */
 import type { ApprovalBroker, PendingCall } from "../broker.js";
+import type { Channel } from "./channel.js";
 import { renderArgs } from "../web/index.js";
 
 export interface TelegramOptions {
@@ -27,7 +28,7 @@ interface TgUpdate {
   };
 }
 
-export class TelegramChannel {
+export class TelegramChannel implements Channel {
   private fetchFn: typeof fetch;
   private offset = 0;
   private running = false;

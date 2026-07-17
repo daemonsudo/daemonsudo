@@ -202,45 +202,51 @@ export class Ledger {
     private redactGlobs: string[] = [],
     private signer?: Signer,
     gateHash?: string,
+    /** invoked after each committed append with the signed head checkpoint JSON */
+    private onCheckpoint?: (checkpointJson: string) => void,
   ) {
     this.chainId = loadOrCreateChainId(db);
     this.gateHash = gateHash ?? sha256("daemonsudo-no-gate-config");
   }
 
   append(input: ReceiptInput): Receipt {
-    const last = this.db.get<{ seq: number; json: string }>(
-      "SELECT seq, json FROM receipts ORDER BY seq DESC LIMIT 1",
-    );
-    const unsigned: Omit<Receipt, "sig"> = {
-      schema: SCHEMA_ID,
-      id: ulid(),
-      chain_id: this.chainId,
-      seq: (last?.seq ?? 0) + 1,
-      prev_hash: sha256(last ? last.json : GENESIS),
-      ts: new Date().toISOString(),
-      server: input.server,
-      tool: input.tool,
-      args_hash: sha256(canonicalJson(input.args ?? {})),
-      args_redacted: redact(input.args ?? {}, this.redactGlobs),
-      decision: input.decision,
-      rule: input.rule,
-      gate_hash: this.gateHash,
-      ...(input.requester ? { requester: input.requester } : {}),
-      ...(input.approver ? { approver: input.approver } : {}),
-      ...(input.result ? { result: input.result } : {}),
-      ...(this.signer ? { kid: this.signer.kid } : {}),
-    };
-    const sig = this.signer ? this.signer.sign(canonicalJson(unsigned)) : "unsigned";
-    const receipt: Receipt = { ...unsigned, sig };
-    const json = canonicalJson(receipt);
-    // receipt + head checkpoint move together or not at all
+    // Read the last seq inside the txn: two writers (gate + grants CLI) must
+    // not build receipts against the same head.
     this.db.exec("BEGIN IMMEDIATE;");
+    let receipt: Receipt;
+    let checkpointJson: string;
     try {
+      const last = this.db.get<{ seq: number; json: string }>(
+        "SELECT seq, json FROM receipts ORDER BY seq DESC LIMIT 1",
+      );
+      const unsigned: Omit<Receipt, "sig"> = {
+        schema: SCHEMA_ID,
+        id: ulid(),
+        chain_id: this.chainId,
+        seq: (last?.seq ?? 0) + 1,
+        prev_hash: sha256(last ? last.json : GENESIS),
+        ts: new Date().toISOString(),
+        server: input.server,
+        tool: input.tool,
+        args_hash: sha256(canonicalJson(input.args ?? {})),
+        args_redacted: redact(input.args ?? {}, this.redactGlobs),
+        decision: input.decision,
+        rule: input.rule,
+        gate_hash: this.gateHash,
+        ...(input.requester ? { requester: input.requester } : {}),
+        ...(input.approver ? { approver: input.approver } : {}),
+        ...(input.result ? { result: input.result } : {}),
+        ...(this.signer ? { kid: this.signer.kid } : {}),
+      };
+      const sig = this.signer ? this.signer.sign(canonicalJson(unsigned)) : "unsigned";
+      receipt = { ...unsigned, sig };
+      const json = canonicalJson(receipt);
+      // receipt + head checkpoint move together or not at all
       this.db.run(
         "INSERT INTO receipts (seq, id, ts, server, tool, decision, json) VALUES (?, ?, ?, ?, ?, ?, ?)",
         [receipt.seq, receipt.id, receipt.ts, receipt.server, receipt.tool, receipt.decision, json],
       );
-      this.writeCheckpoint(receipt.seq, json);
+      checkpointJson = this.writeCheckpoint(receipt.seq, json);
       this.db.exec("COMMIT;");
     } catch (e) {
       try {
@@ -250,11 +256,16 @@ export class Ledger {
       }
       throw e;
     }
+    try {
+      this.onCheckpoint?.(checkpointJson);
+    } catch (e) {
+      console.error("daemonsudo: checkpoint hook failed:", e instanceof Error ? e.message : e);
+    }
     return receipt;
   }
 
   /** Signed head pointer — deleting the newest receipts leaves it dangling. */
-  private writeCheckpoint(seq: number, json: string): void {
+  private writeCheckpoint(seq: number, json: string): string {
     const payload = {
       chain_id: this.chainId,
       seq,
@@ -262,11 +273,13 @@ export class Ledger {
       ...(this.signer ? { kid: this.signer.kid } : {}),
     };
     const sig = this.signer ? this.signer.sign(canonicalJson(payload)) : "unsigned";
+    const checkpointJson = canonicalJson({ ...payload, sig });
     this.db.run(
       "INSERT INTO ledger_meta (key, value) VALUES ('checkpoint', ?) " +
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-      [canonicalJson({ ...payload, sig })],
+      [checkpointJson],
     );
+    return checkpointJson;
   }
 
   list(limit = 200): Receipt[] {

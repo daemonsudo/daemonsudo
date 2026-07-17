@@ -44,6 +44,7 @@ describe("telegram channel", () => {
       tool: "delete_thing",
       args: { id: "x", note: "<b>injection</b> attempt", password: "hunter2" },
       rule: "delete_*: approve",
+      origin: "mcp",
     });
     await channel.notifyPending(broker.get(parked.id)!);
 
@@ -61,7 +62,7 @@ describe("telegram channel", () => {
 
   test("only allowed users with the right nonce can decide", async () => {
     const { db, broker, channel, calls } = await setup();
-    const parked = broker.park({ server: "m", tool: "delete_thing", args: {}, rule: "delete_*: approve" });
+    const parked = broker.park({ server: "m", tool: "delete_thing", args: {}, rule: "delete_*: approve", origin: "mcp" });
     const nonce = broker.get(parked.id)!.nonce;
     const cb = (from: number, data: string) => ({
       update_id: 1,
@@ -92,7 +93,7 @@ describe("telegram channel", () => {
 
   test("deny via button resolves the parked call as denied", async () => {
     const { db, broker, channel } = await setup();
-    const parked = broker.park({ server: "m", tool: "send_thing", args: {}, rule: "send_*: approve" });
+    const parked = broker.park({ server: "m", tool: "send_thing", args: {}, rule: "send_*: approve", origin: "mcp" });
     const nonce = broker.get(parked.id)!.nonce;
     await channel.handleUpdate({
       update_id: 2,

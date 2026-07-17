@@ -8,6 +8,8 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { ulid } from "ulid";
 import type { Db } from "./db.js";
 
+export type Origin = "mcp" | "cc";
+
 export interface PendingCall {
   id: string;
   created_at: string;
@@ -16,6 +18,7 @@ export interface PendingCall {
   tool: string;
   args: unknown;
   rule: string;
+  origin: Origin;
   token: string;
   nonce: string;
 }
@@ -42,6 +45,7 @@ interface PendingRow {
   args_json: string;
   rule: string;
   status: string;
+  origin: Origin;
   token: string;
   nonce: string;
 }
@@ -83,7 +87,13 @@ export class ApprovalBroker {
   }
 
   /** Park a call. Throws if the DB is unavailable — callers must fail closed. */
-  park(input: { server: string; tool: string; args: unknown; rule: string }): ParkedCall {
+  park(input: {
+    server: string;
+    tool: string;
+    args: unknown;
+    rule: string;
+    origin: Origin;
+  }): ParkedCall {
     const id = ulid();
     const token = randomBytes(16).toString("hex");
     const nonce = randomBytes(8).toString("hex");
@@ -97,14 +107,15 @@ export class ApprovalBroker {
       tool: input.tool,
       args: input.args,
       rule: input.rule,
+      origin: input.origin,
       token,
       nonce,
     };
     this.db.run(
-      `INSERT INTO pending (id, created_at, expires_at, server, tool, args_json, rule, status, token, nonce)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+      `INSERT INTO pending (id, created_at, expires_at, server, tool, args_json, rule, status, origin, token, nonce)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
       [id, pending.created_at, pending.expires_at, input.server, input.tool,
-       JSON.stringify(input.args ?? {}), input.rule, token, nonce],
+       JSON.stringify(input.args ?? {}), input.rule, input.origin, token, nonce],
     );
     const decision = new Promise<BrokerDecision>((resolve) => {
       this.waiters.set(id, resolve);
@@ -179,6 +190,7 @@ export class ApprovalBroker {
       tool: row.tool,
       args: JSON.parse(row.args_json),
       rule: row.rule,
+      origin: row.origin,
       token: row.token,
       nonce: row.nonce,
     };

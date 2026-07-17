@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { ApprovalBroker } from "./broker.js";
 import { TelegramChannel } from "./channels/telegram.js";
 import { defaultDbPath, loadConfig } from "./config.js";
+import { DecisionCore } from "./core.js";
 import { openDb, type Db } from "./db.js";
 import {
   Ledger,
@@ -185,7 +186,7 @@ async function main(): Promise<void> {
   const rules = new YamlGlobEngine(config.rules, config.defaults);
   const broker = new ApprovalBroker(db, config.timeoutMs);
   broker.recoverStalePending(); // adopt this db: close out a prior gate run's orphans
-  const interceptor = new ToolGate(rules, ledger, broker);
+  const interceptor = new ToolGate(new DecisionCore(rules, ledger, broker));
 
   const web = await startWeb(broker, ledger, config);
 

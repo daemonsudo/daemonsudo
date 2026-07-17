@@ -18,6 +18,7 @@ import type { Hono } from "hono";
 import { ApprovalBroker, type BrokerDecision } from "./broker.js";
 import { TelegramChannel } from "./channels/telegram.js";
 import { defaultDbPath, loadConfig } from "./config.js";
+import { DecisionCore } from "./core.js";
 import { openDb } from "./db.js";
 import {
   Ledger,
@@ -26,6 +27,7 @@ import {
   sha256,
   type Approver,
 } from "./ledger.js";
+import { YamlGlobEngine } from "./rules.js";
 import { startWeb } from "./web/index.js";
 
 const STASH_TTL_MS = 15 * 60 * 1000;
@@ -72,6 +74,7 @@ export async function runServe(configPath?: string): Promise<void> {
 
   const ledger = new Ledger(db, config.redact, makeSigner(loadOrCreateKeys(db)), config.gateHash);
   const broker = new ApprovalBroker(db, config.timeoutMs);
+  const core = new DecisionCore(new YamlGlobEngine(config.rules, config.defaults), ledger, broker);
 
   // Approved-call stash: keyed by (session, tool, input-hash). In-memory with TTL.
   const stash = new Map<string, StashEntry>();
@@ -94,11 +97,13 @@ export async function runServe(configPath?: string): Promise<void> {
       }
 
       const parkedAt = Date.now();
-      const parked = broker.park({
+      // The CC door never runs the rules engine — CC already decided "ask".
+      const parked = core.parkOnly({
         server: "claude-code",
         tool: body.tool_name,
         args: body.tool_input,
         rule: "ask",
+        origin: "cc",
       });
 
       // Cancel the parked call if the hook disconnects (CC session killed).
@@ -130,21 +135,18 @@ export async function runServe(configPath?: string): Promise<void> {
 
       // Denied or timeout: write the terminal receipt now — no PostToolUse follows.
       const terminalDecision = decision.status === "timeout" ? "timeout" : "denied";
-      try {
-        ledger.append({
+      core.terminalReceipt(
+        {
           server: "claude-code",
           tool: body.tool_name,
           args: body.tool_input,
-          decision: terminalDecision,
-          rule: "ask",
           requester: { client: "claude-code", session: body.session_id, call_id: parked.id },
-          approver: decision.channel
-            ? { channel: decision.channel, user: decision.user!, latency_ms }
-            : undefined,
-        });
-      } catch (e) {
-        console.error("daemonsudo serve: receipt append failed:", e instanceof Error ? e.message : e);
-      }
+          origin: "cc",
+        },
+        terminalDecision,
+        "ask",
+        decision.channel ? { channel: decision.channel, user: decision.user!, latency_ms } : undefined,
+      );
       return c.json({ behavior: "deny" });
     });
 
