@@ -26,6 +26,7 @@ import {
   sha256,
   type Approver,
 } from "./ledger.js";
+import { MirrorPusher } from "./mirror.js";
 import { YamlGlobEngine } from "./rules.js";
 import { loadOrCreateToken, tokenPath } from "./token.js";
 import { createGateApp, listenOn, startWeb } from "./web/index.js";
@@ -58,7 +59,16 @@ export async function runServe(configPath?: string): Promise<void> {
   const db = await openDb(defaultDbPath());
   const token = loadOrCreateToken();
 
-  const ledger = new Ledger(db, config.redact, makeSigner(loadOrCreateKeys(db)), config.gateHash);
+  const pusher = config.mirror
+    ? new MirrorPusher({ url: config.mirror.url, token: process.env[config.mirror.tokenEnv] })
+    : undefined;
+  const ledger = new Ledger(
+    db,
+    config.redact,
+    makeSigner(loadOrCreateKeys(db)),
+    config.gateHash,
+    pusher && ((cp) => pusher.push(cp)),
+  );
   const broker = new ApprovalBroker(db, config.timeoutMs);
   const grants = new GrantStore(db);
   const core = new DecisionCore(new YamlGlobEngine(config.rules, config.defaults), ledger, broker, {
@@ -380,6 +390,7 @@ export async function runServe(configPath?: string): Promise<void> {
     if (closing) return;
     closing = true;
     clearInterval(mcpSweeper);
+    pusher?.stop();
     web.stop();
     stopGateListener?.();
     try { db.exec("PRAGMA wal_checkpoint(TRUNCATE);"); } catch {}

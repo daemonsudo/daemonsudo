@@ -11,8 +11,9 @@
  *   daemonsudo grants [--db path]                            list standing grants
  *   daemonsudo grant <server> <tool> --ttl 15m|1h|8h         mint a grant (operator-side)
  *   daemonsudo revoke <grant-id>                             revoke a grant (operator-side)
+ *   daemonsudo mirror --listen <host:port> [--file path]     off-box checkpoint receiver
  */
-import { copyFileSync, existsSync, readdirSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ApprovalBroker } from "./broker.js";
@@ -26,9 +27,12 @@ import {
   loadOrCreateKeys,
   makeSigner,
   makeVerifier,
+  verifyAgainstMirror,
   verifyChain,
+  type Checkpoint,
   type Receipt,
 } from "./ledger.js";
+import { MirrorPusher, parseCheckpointLines, runMirrorReceiver } from "./mirror.js";
 import { GateProxy, ToolGate } from "./proxy.js";
 import { RemoteToolGate } from "./remote.js";
 import { YamlGlobEngine } from "./rules.js";
@@ -56,11 +60,12 @@ function usage(): never {
       "       daemonsudo serve [--config gate.yaml]\n" +
       "       daemonsudo hook [--ensure-daemon]\n" +
       `       daemonsudo init [--preset ${presetNames().join("|")}]\n` +
-      "       daemonsudo verify [--db path]\n" +
+      "       daemonsudo verify [--db path] [--against <url|file>]\n" +
       "       daemonsudo receipts [--db path]\n" +
       "       daemonsudo grants [--db path]\n" +
       "       daemonsudo grant <server> <tool> [--ttl 15m|1h|8h] [--db path]\n" +
-      "       daemonsudo revoke <grant-id> [--db path]",
+      "       daemonsudo revoke <grant-id> [--db path]\n" +
+      "       daemonsudo mirror --listen <host:port> [--file mirror.jsonl]",
   );
   process.exit(2);
 }
@@ -103,6 +108,19 @@ function dbPathFromFlags(args: string[]): string {
   return i !== -1 && args[i + 1] ? args[i + 1] : defaultDbPath();
 }
 
+/** Load mirrored checkpoints from a receiver URL (bearer-authed) or a JSONL file. */
+async function loadCheckpoints(source: string): Promise<Checkpoint[]> {
+  if (source.startsWith("http://") || source.startsWith("https://")) {
+    const token = process.env.DAEMONSUDO_MIRROR_TOKEN;
+    const res = await fetch(`${source}/checkpoints`, {
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new Error(`mirror replied ${res.status} (set DAEMONSUDO_MIRROR_TOKEN?)`);
+    return (await res.json()) as Checkpoint[];
+  }
+  return parseCheckpointLines(readFileSync(source, "utf8"));
+}
+
 async function cmdVerify(args: string[]): Promise<never> {
   const db = await openDb(dbPathFromFlags(args));
   const keys = db.all<{ kid: string; public_hex: string }>("SELECT kid, public_hex FROM keys");
@@ -117,17 +135,55 @@ async function cmdVerify(args: string[]): Promise<never> {
   }
   const verifiers = new Map(keys.map((k) => [k.kid, makeVerifier(k.public_hex)]));
   const result = verifyChain(db, verifiers);
-  if (result.ok) {
-    console.log(
-      `✓ ${result.count} receipts verified — hash chain intact, head checkpoint matches, all signatures valid`,
-    );
-    for (const k of keys) console.log(`  key ${k.kid}: ed25519:${k.public_hex}`);
-    process.exit(0);
+  if (!result.ok) {
+    const where = result.badSeq === undefined ? "" : ` at receipt #${result.badSeq}`;
+    console.error(`✗ chain INVALID${where}: ${result.error}`);
+    console.error(`  (${result.count} receipts total)`);
+    process.exit(1);
   }
-  const where = result.badSeq === undefined ? "" : ` at receipt #${result.badSeq}`;
-  console.error(`✗ chain INVALID${where}: ${result.error}`);
-  console.error(`  (${result.count} receipts total)`);
-  process.exit(1);
+  console.log(
+    `✓ ${result.count} receipts verified — hash chain intact, head checkpoint matches, all signatures valid`,
+  );
+  for (const k of keys) console.log(`  key ${k.kid}: ed25519:${k.public_hex}`);
+
+  const ai = args.indexOf("--against");
+  if (ai !== -1) {
+    const source = args[ai + 1];
+    if (!source) usage();
+    let mirrored: Checkpoint[];
+    try {
+      mirrored = await loadCheckpoints(source);
+    } catch (e) {
+      console.error(`✗ could not load mirror checkpoints: ${e instanceof Error ? e.message : e}`);
+      process.exit(1);
+    }
+    const against = verifyAgainstMirror(db, verifiers, mirrored);
+    if (!against.ok) {
+      console.error(`✗ mirror check FAILED: ${against.error}`);
+      process.exit(1);
+    }
+    console.log(`✓ ${against.count} mirrored checkpoints match — no truncation, no rewrites`);
+  }
+  process.exit(0);
+}
+
+async function cmdMirror(args: string[]): Promise<void> {
+  const li = args.indexOf("--listen");
+  const hostPort = li !== -1 ? args[li + 1] : undefined;
+  if (!hostPort) usage();
+  const colon = hostPort.lastIndexOf(":");
+  const host = colon === -1 ? "127.0.0.1" : hostPort.slice(0, colon);
+  const port = Number(hostPort.slice(colon + 1));
+  if (!Number.isFinite(port)) usage();
+  const fi = args.indexOf("--file");
+  const file = fi !== -1 && args[fi + 1] ? args[fi + 1] : "mirror.jsonl";
+  const token = process.env.DAEMONSUDO_MIRROR_TOKEN;
+  if (!token) {
+    console.error("daemonsudo mirror: DAEMONSUDO_MIRROR_TOKEN must be set (bearer auth)");
+    process.exit(2);
+  }
+  await runMirrorReceiver({ host, port, file, token });
+  // keep running until killed — the listener holds the event loop open
 }
 
 async function cmdReceipts(args: string[]): Promise<never> {
@@ -254,6 +310,7 @@ async function main(): Promise<void> {
   if (argv[0] === "grants") return cmdGrantsList(argv.slice(1));
   if (argv[0] === "grant") return cmdGrantCreate(argv.slice(1));
   if (argv[0] === "revoke") return cmdGrantRevoke(argv.slice(1));
+  if (argv[0] === "mirror") return cmdMirror(argv.slice(1));
 
   // CC plugin commands — dispatch before flag parsing so they get their own argv.
   if (argv[0] === "serve") {
@@ -312,7 +369,16 @@ async function main(): Promise<void> {
     }
   });
   maybeSendTelemetryPing(db, config.telemetry);
-  const ledger = new Ledger(db, config.redact, makeSigner(loadOrCreateKeys(db)), config.gateHash);
+  const pusher = config.mirror
+    ? new MirrorPusher({ url: config.mirror.url, token: process.env[config.mirror.tokenEnv] })
+    : undefined;
+  const ledger = new Ledger(
+    db,
+    config.redact,
+    makeSigner(loadOrCreateKeys(db)),
+    config.gateHash,
+    pusher && ((cp) => pusher.push(cp)),
+  );
   const rules = new YamlGlobEngine(config.rules, config.defaults);
   const broker = new ApprovalBroker(db, config.timeoutMs);
   broker.recoverStalePending(); // adopt this db: close out a prior gate run's orphans

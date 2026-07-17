@@ -318,6 +318,15 @@ export interface VerifyResult {
   badSeq?: number;
 }
 
+/** A signed head checkpoint, as written to ledger_meta and streamed to mirrors. */
+export interface Checkpoint {
+  chain_id: string;
+  seq: number;
+  receipt_hash: string;
+  kid?: string;
+  sig: string;
+}
+
 export type VerifierFn = (payload: string, sig: string) => boolean;
 
 /**
@@ -366,13 +375,7 @@ export function verifyChain(db: Db, keys: Map<string, VerifierFn>): VerifyResult
   if (!cpRow) {
     return { ok: false, count, error: "head checkpoint missing — ledger tail may have been truncated" };
   }
-  const cp = JSON.parse(cpRow.value) as {
-    chain_id: string;
-    seq: number;
-    receipt_hash: string;
-    kid?: string;
-    sig: string;
-  };
+  const cp = JSON.parse(cpRow.value) as Checkpoint;
   const { sig: cpSig, ...cpUnsigned } = cp;
   const cpVerify = cp.kid === undefined ? undefined : keys.get(cp.kid);
   if (!cpVerify || !cpVerify(canonicalJson(cpUnsigned), cpSig)) {
@@ -391,4 +394,48 @@ export function verifyChain(db: Db, keys: Map<string, VerifierFn>): VerifyResult
     };
   }
   return { ok: true, count };
+}
+
+/**
+ * The attack local verify can't see: the key holder deletes the newest rows
+ * (or rewrites one) and re-signs a fresh head checkpoint. Mirrored
+ * checkpoints are the outside witness: every mirrored (seq, receipt_hash)
+ * must match the local receipt at that seq, and the local head must reach
+ * the highest mirrored seq. Pure read — works offline against a JSONL file.
+ *
+ * Coverage: only receipts up to the highest WITNESSED seq are attested.
+ * Receipts appended after the mirror's last acknowledged push are
+ * unwitnessed until the next push lands — a detection-latency window,
+ * not full-chain attestation.
+ */
+export function verifyAgainstMirror(
+  db: Db,
+  keys: Map<string, VerifierFn>,
+  checkpoints: Checkpoint[],
+): VerifyResult {
+  const chainRow = db.get<{ value: string }>("SELECT value FROM ledger_meta WHERE key = 'chain_id'");
+  const relevant = checkpoints.filter((cp) => cp.chain_id === chainRow?.value);
+  if (relevant.length === 0) {
+    return { ok: false, count: 0, error: "mirror holds no checkpoints for this chain" };
+  }
+  const localHead =
+    db.get<{ seq: number }>("SELECT seq FROM receipts ORDER BY seq DESC LIMIT 1")?.seq ?? 0;
+  for (const cp of relevant) {
+    const fail = (error: string): VerifyResult => ({ ok: false, count: relevant.length, badSeq: cp.seq, error });
+    const verifySig = cp.kid === undefined ? undefined : keys.get(cp.kid);
+    const { sig, ...unsigned } = cp;
+    if (!verifySig || !verifySig(canonicalJson(unsigned), sig)) {
+      return fail(`mirrored checkpoint at seq ${cp.seq} has an invalid signature`);
+    }
+    if (cp.seq > localHead) {
+      return fail(
+        `ledger truncated — mirror witnessed seq ${cp.seq}, local ledger ends at ${localHead}`,
+      );
+    }
+    const row = db.get<{ json: string }>("SELECT json FROM receipts WHERE seq = ?", [cp.seq]);
+    if (!row || sha256(row.json) !== cp.receipt_hash) {
+      return fail(`receipt #${cp.seq} rewritten — local hash differs from the mirror's witness`);
+    }
+  }
+  return { ok: true, count: relevant.length };
 }

@@ -228,11 +228,13 @@ export interface WebChannel {
 export async function listenOn(app: Hono, host: string, port: number): Promise<() => void> {
   if (process.versions.bun) {
     const Bun = (globalThis as Record<string, unknown>).Bun as {
-      serve(opts: unknown): { stop(): void };
+      serve(opts: unknown): { stop(closeActive?: boolean): void };
     };
     // idleTimeout:0 keeps long-held /gate/approve connections alive past Bun's default.
     const server = Bun.serve({ hostname: host, port, fetch: app.fetch, idleTimeout: 0 });
-    return () => server.stop();
+    // stop(true): actually release the port — callers stop() only on shutdown,
+    // where a lingering listener would shadow the next bind.
+    return () => server.stop(true);
   }
   const { serve } = await import("@hono/node-server");
   const server = serve({ fetch: app.fetch, hostname: host, port });

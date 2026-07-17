@@ -33,6 +33,8 @@ export interface GateConfig {
   grantsMaxTtlMs: number;
   /** remote-broker mode: the host daemon deciding for this proxy (env DAEMONSUDO_REMOTE_URL wins) */
   remoteUrl?: string;
+  /** off-box checkpoint mirror (truncation/rewrite witness) */
+  mirror?: { url: string; tokenEnv: string };
   /** sha256 of the gate.yaml bytes in force — stamped on every receipt */
   gateHash: string;
   /** opt-in weekly ping of {version, anon_id} — default off */
@@ -89,6 +91,7 @@ export function loadConfig(path?: string): GateConfig {
   const web = channels.web ?? {};
   const gateListen = ((raw.gate ?? {}) as Record<string, Record<string, unknown>>).listen;
   const remote = raw.remote as Record<string, unknown> | undefined;
+  const mirror = raw.mirror as Record<string, unknown> | undefined;
 
   return {
     defaults: raw.defaults === undefined ? "approve" : asAction(raw.defaults, "defaults"),
@@ -115,6 +118,9 @@ export function loadConfig(path?: string): GateConfig {
       ((raw.grants as Record<string, unknown> | undefined)?.max_ttl as string | number) ?? "8h",
     ),
     remoteUrl: remote?.url ? String(remote.url) : undefined,
+    mirror: mirror?.url
+      ? { url: String(mirror.url), tokenEnv: String(mirror.token_env ?? "DAEMONSUDO_MIRROR_TOKEN") }
+      : undefined,
     gateHash,
     telemetry: raw.telemetry === true,
   };
