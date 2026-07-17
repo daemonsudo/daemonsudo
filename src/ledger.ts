@@ -52,6 +52,8 @@ export interface Receipt {
   gate_hash: string;
   requester?: Requester;
   approver?: Approver;
+  /** approver's one-line deny reason (additive, v0.3) */
+  reason?: string;
   result?: { status: "ok" | "error"; content_hash: string };
   /** fingerprint of the signing key — verification survives key rotation */
   kid?: string;
@@ -66,6 +68,7 @@ export interface ReceiptInput {
   rule: string;
   requester?: Requester;
   approver?: Approver;
+  reason?: string;
   result?: { status: "ok" | "error"; content_hash: string };
 }
 
@@ -235,6 +238,7 @@ export class Ledger {
         gate_hash: this.gateHash,
         ...(input.requester ? { requester: input.requester } : {}),
         ...(input.approver ? { approver: input.approver } : {}),
+        ...(input.reason ? { reason: input.reason } : {}),
         ...(input.result ? { result: input.result } : {}),
         ...(this.signer ? { kid: this.signer.kid } : {}),
       };

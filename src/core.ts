@@ -99,6 +99,7 @@ export class DecisionCore {
       terminal === "denied" && decision.channel
         ? { channel: decision.channel, user: decision.user ?? "unknown", latency_ms: elapsedMs }
         : undefined,
+      terminal === "denied" ? decision.reason : undefined,
     );
     return {
       kind: "block",
@@ -158,6 +159,7 @@ export class DecisionCore {
     decision: "denied" | "timeout",
     rule: string,
     approver?: Approver,
+    reason?: string,
   ): void {
     try {
       this.ledger.append({
@@ -168,6 +170,7 @@ export class DecisionCore {
         decision,
         rule,
         approver,
+        reason,
       });
     } catch (e) {
       console.error("daemonsudo: receipt write failed:", e instanceof Error ? e.message : e);

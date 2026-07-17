@@ -85,12 +85,13 @@ describe("web approval flow", () => {
     const pend2 = await waitForPending(db);
     const no = await fetch(`${WEB}/approve/${pend2.id}`, {
       method: "POST",
-      body: new URLSearchParams({ t: pend2.token, action: "deny" }),
+      body: new URLSearchParams({ t: pend2.token, action: "deny", reason: "not in prod" }),
     });
     expect(no.status).toBe(200);
     const denied = await denyPromise;
     expect(denied.isError).toBe(true);
     expect((denied.content as Array<{ text: string }>)[0].text).toContain("not executed");
+    expect((denied.content as Array<{ text: string }>)[0].text).toContain("not in prod");
     expect(readFileSync(mockLog, "utf8").trim()).toBe("delete_thing d1"); // send never ran
 
     // --- receipts ---

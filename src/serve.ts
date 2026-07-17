@@ -146,8 +146,9 @@ export async function runServe(configPath?: string): Promise<void> {
         terminalDecision,
         "ask",
         decision.channel ? { channel: decision.channel, user: decision.user!, latency_ms } : undefined,
+        terminalDecision === "denied" ? decision.reason : undefined,
       );
-      return c.json({ behavior: "deny" });
+      return c.json({ behavior: "deny", ...(decision.reason ? { reason: decision.reason } : {}) });
     });
 
     // PostToolUse / PostToolUseFailure hook → correlate + write one receipt.

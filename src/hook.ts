@@ -70,6 +70,8 @@ function emitDeny(reason: string): void {
   process.stderr.write(`daemonsudo hook: denying — ${reason}\n`);
   process.stdout.write(
     JSON.stringify({
+      // top-level `reason` is the denial message Claude Code shows the model
+      reason,
       hookSpecificOutput: {
         hookEventName: "PermissionRequest",
         decision: { behavior: "deny" },
@@ -102,11 +104,12 @@ async function handlePermissionRequest(input: Record<string, unknown>): Promise<
     return;
   }
 
-  const behavior = (res.data as Record<string, unknown>)?.behavior;
-  if (behavior === "allow") {
+  const data = res.data as Record<string, unknown> | undefined;
+  if (data?.behavior === "allow") {
     emitAllow();
   } else {
-    emitDeny("remote decision: deny");
+    const reason = typeof data?.reason === "string" ? data.reason : undefined;
+    emitDeny(reason ? `denied by approver: ${reason}` : "remote decision: deny");
   }
 }
 

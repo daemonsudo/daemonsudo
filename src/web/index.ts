@@ -72,6 +72,7 @@ function pendingCard(p: PendingCall, withButtons: boolean, token?: string): stri
 <form method="post" action="/approve/${escapeHtml(p.id)}">
   <input type="hidden" name="t" value="${escapeHtml(token)}">
   <input type="hidden" name="action" value="deny">
+  <input type="text" name="reason" maxlength="300" placeholder="reason (optional)">
   <button class="deny" type="submit">Deny</button>
 </form></p>`
       : "";
@@ -102,7 +103,11 @@ export function createWebApp(broker: ApprovalBroker, ledger: Ledger, register?: 
     const form = await c.req.parseBody();
     const token = typeof form.t === "string" ? form.t : "";
     const approve = form.action === "approve";
-    const res = broker.decide(id, { approve, channel: "web", user: "web", token });
+    const reason =
+      !approve && typeof form.reason === "string" && form.reason.trim()
+        ? form.reason.trim().slice(0, 300)
+        : undefined;
+    const res = broker.decide(id, { approve, channel: "web", user: "web", token, reason });
     if (!res.ok) return c.html(page("approval", `<p class="bad">✗ ${escapeHtml(res.error ?? "failed")}</p>`), 400);
     return c.html(
       page(
@@ -132,7 +137,7 @@ export function createWebApp(broker: ApprovalBroker, ledger: Ledger, register?: 
 <td class="muted">${escapeHtml(r.ts)}</td>
 <td><strong>${escapeHtml(r.tool)}</strong><br><span class="muted">${escapeHtml(r.server)}</span>
 <details><summary class="muted">args</summary><pre>${escapeHtml(renderArgs(r.args_redacted, 1000))}</pre></details></td>
-<td class="decision-${escapeHtml(r.decision)}">${escapeHtml(r.decision)}</td>
+<td class="decision-${escapeHtml(r.decision)}">${escapeHtml(r.decision)}${r.reason ? `<br><span class="muted">${escapeHtml(truncate(r.reason, 300))}</span>` : ""}</td>
 <td class="muted">${escapeHtml(r.rule)}</td>
 <td>${approver}</td>
 <td class="muted">${escapeHtml(r.id.slice(-8))}<br>${r.sig === "unsigned" ? "unsigned" : "✍ signed"}</td>

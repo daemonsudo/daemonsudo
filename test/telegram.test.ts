@@ -14,15 +14,17 @@ interface ApiCall {
 
 function fakeApi(): { calls: ApiCall[]; fetchFn: typeof fetch } {
   const calls: ApiCall[] = [];
+  let messageId = 100;
   const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
     const method = String(url).split("/").pop()!;
     calls.push({ method, body: JSON.parse(String(init?.body)) as Record<string, unknown> });
-    return new Response(JSON.stringify({ ok: true, result: [] }));
+    const result = method === "sendMessage" ? { message_id: ++messageId } : [];
+    return new Response(JSON.stringify({ ok: true, result }));
   }) as typeof fetch;
   return { calls, fetchFn };
 }
 
-async function setup() {
+async function setup(reasonTimeoutMs?: number) {
   const db = await openDb(join(tmpDir(), "gate.db"));
   const broker = new ApprovalBroker(db, 60_000);
   const { calls, fetchFn } = fakeApi();
@@ -32,6 +34,7 @@ async function setup() {
     broker,
     webBaseUrl: "http://127.0.0.1:4910",
     fetchFn,
+    reasonTimeoutMs,
   });
   return { db, broker, channel, calls };
 }
@@ -88,6 +91,56 @@ describe("telegram channel", () => {
     // card edited with the outcome
     expect(calls.at(-1)?.method).toBe("editMessageText");
     expect(String(calls.at(-1)?.body.text)).toContain("✅ approved by 111");
+    db.close();
+  });
+
+  test("deny + reason: force-reply prompt, allowed reply carries the reason", async () => {
+    const { db, broker, channel, calls } = await setup();
+    const parked = broker.park({ server: "m", tool: "send_thing", args: {}, rule: "send_*: approve", origin: "mcp" });
+    const nonce = broker.get(parked.id)!.nonce;
+
+    await channel.handleUpdate({
+      update_id: 3,
+      callback_query: { id: "cb3", from: { id: 111 }, data: `r:${parked.id}:${nonce}`,
+        message: { chat: { id: 111 }, message_id: 9, text: "card" } },
+    });
+    // force-reply prompt sent, call still pending
+    const prompt = calls.findLast((c) => c.method === "sendMessage")!;
+    expect((prompt.body.reply_markup as { force_reply: boolean }).force_reply).toBe(true);
+    expect(broker.get(parked.id)).toBeDefined();
+
+    // a stranger's reply is ignored
+    await channel.handleUpdate({
+      update_id: 4,
+      message: { message_id: 200, from: { id: 999 }, chat: { id: 111 },
+        text: "hijack", reply_to_message: { message_id: 101 } },
+    });
+    expect(broker.get(parked.id)).toBeDefined();
+
+    // the allowed user's reply denies with the reason
+    await channel.handleUpdate({
+      update_id: 5,
+      message: { message_id: 201, from: { id: 111 }, chat: { id: 111 },
+        text: "wrong environment", reply_to_message: { message_id: 101 } },
+    });
+    const decision = await parked.decision;
+    expect(decision.status).toBe("denied");
+    expect(decision.reason).toBe("wrong environment");
+    db.close();
+  });
+
+  test("deny + reason sub-timeout denies without a reason", async () => {
+    const { db, broker, channel } = await setup(80);
+    const parked = broker.park({ server: "m", tool: "send_thing", args: {}, rule: "send_*: approve", origin: "mcp" });
+    const nonce = broker.get(parked.id)!.nonce;
+    await channel.handleUpdate({
+      update_id: 6,
+      callback_query: { id: "cb6", from: { id: 222 }, data: `r:${parked.id}:${nonce}`,
+        message: { chat: { id: 222 }, message_id: 9, text: "card" } },
+    });
+    const decision = await parked.decision;
+    expect(decision.status).toBe("denied");
+    expect(decision.reason).toBeUndefined();
     db.close();
   });
 

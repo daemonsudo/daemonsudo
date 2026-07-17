@@ -140,7 +140,14 @@ export class ApprovalBroker {
    */
   decide(
     id: string,
-    opts: { approve: boolean; channel: string; user: string; token?: string; nonce?: string },
+    opts: {
+      approve: boolean;
+      channel: string;
+      user: string;
+      token?: string;
+      nonce?: string;
+      reason?: string;
+    },
   ): { ok: boolean; error?: string } {
     const row = this.db.get<PendingRow>("SELECT * FROM pending WHERE id = ?", [id]);
     if (!row) return { ok: false, error: "unknown approval id" };
@@ -158,6 +165,7 @@ export class ApprovalBroker {
       status: opts.approve ? "approved" : "denied",
       channel: opts.channel,
       user: opts.user,
+      reason: opts.reason,
     });
     return { ok: true };
   }
@@ -204,10 +212,10 @@ export class ApprovalBroker {
     this.waiters.delete(id);
     try {
       this.db.run(
-        `UPDATE pending SET status = ?, decided_channel = ?, decided_user = ?, decided_at = ?
+        `UPDATE pending SET status = ?, decided_channel = ?, decided_user = ?, decided_at = ?, decided_reason = ?
          WHERE id = ? AND status = 'pending'`,
         [decision.status, decision.channel ?? null, decision.user ?? null,
-         new Date().toISOString(), id],
+         new Date().toISOString(), decision.reason ?? null, id],
       );
     } catch (e) {
       console.error("daemonsudo: pending update failed:", e instanceof Error ? e.message : e);
