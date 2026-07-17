@@ -31,6 +31,8 @@ export interface GateConfig {
   };
   /** grants.max_ttl clamp for approve-with-grant TTLs (default 8h) */
   grantsMaxTtlMs: number;
+  /** remote-broker mode: the host daemon deciding for this proxy (env DAEMONSUDO_REMOTE_URL wins) */
+  remoteUrl?: string;
   /** sha256 of the gate.yaml bytes in force — stamped on every receipt */
   gateHash: string;
   /** opt-in weekly ping of {version, anon_id} — default off */
@@ -86,6 +88,7 @@ export function loadConfig(path?: string): GateConfig {
   const tg = channels.telegram;
   const web = channels.web ?? {};
   const gateListen = ((raw.gate ?? {}) as Record<string, Record<string, unknown>>).listen;
+  const remote = raw.remote as Record<string, unknown> | undefined;
 
   return {
     defaults: raw.defaults === undefined ? "approve" : asAction(raw.defaults, "defaults"),
@@ -111,6 +114,7 @@ export function loadConfig(path?: string): GateConfig {
     grantsMaxTtlMs: parseDuration(
       ((raw.grants as Record<string, unknown> | undefined)?.max_ttl as string | number) ?? "8h",
     ),
+    remoteUrl: remote?.url ? String(remote.url) : undefined,
     gateHash,
     telemetry: raw.telemetry === true,
   };

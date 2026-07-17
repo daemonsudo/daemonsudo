@@ -30,6 +30,7 @@ import {
   type Receipt,
 } from "./ledger.js";
 import { GateProxy, ToolGate } from "./proxy.js";
+import { RemoteToolGate } from "./remote.js";
 import { YamlGlobEngine } from "./rules.js";
 import { loadToken } from "./token.js";
 import { maybeSendTelemetryPing } from "./telemetry.js";
@@ -283,6 +284,23 @@ async function main(): Promise<void> {
   const cmd = argv.slice(i);
   if (cmd.length === 0) usage();
   const config = loadConfig(configPath);
+
+  // Remote-broker mode: no local db/ledger/rules/broker/web/telegram at all —
+  // the host daemon owns policy, keys, and the ledger. This proxy just asks.
+  const remoteUrl = process.env.DAEMONSUDO_REMOTE_URL ?? config.remoteUrl;
+  if (remoteUrl) {
+    const proxy = new GateProxy({
+      command: cmd[0],
+      args: cmd.slice(1),
+      interceptor: new RemoteToolGate({ url: remoteUrl, token: loadToken() }),
+    });
+    await proxy.start();
+    console.error(
+      `daemonsudo: remote-broker mode — gating '${cmd.join(" ")}' via ${remoteUrl} (daemon down = fail closed, auto included)`,
+    );
+    return;
+  }
+
   const db = await openDb(defaultDbPath());
   // fold the WAL back into the db file on exit so a copied gate.db is
   // self-contained for offline `daemonsudo verify`

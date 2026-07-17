@@ -28,6 +28,11 @@ export interface CoreCall {
   origin: Origin;
 }
 
+export interface ExecutionResult {
+  status: "ok" | "error";
+  content_hash: string;
+}
+
 export interface ExecuteOutcome {
   kind: "execute";
   decision: "auto" | "approved";
@@ -35,8 +40,12 @@ export interface ExecuteOutcome {
   approver?: Approver;
   /** set when the call executes under a standing grant */
   grantId?: string;
-  /** Write the execution receipt — call once, after the downstream result. */
-  recordResult(result: { status: "ok" | "error"; content_hash: string }): void;
+  /**
+   * Write the execution receipt — call once, after the downstream result.
+   * Omitting result records the execution as unreported (remote proxy died
+   * post-decision — the stash sweeper's documented gap).
+   */
+  recordResult(result?: ExecutionResult): void;
 }
 
 export interface BlockOutcome {

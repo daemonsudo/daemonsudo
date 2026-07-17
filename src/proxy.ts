@@ -161,7 +161,30 @@ export class GateProxy {
   }
 }
 
-const PROGRESS_INTERVAL_MS = 15_000;
+export const PROGRESS_INTERVAL_MS = 15_000;
+
+/** Who is asking, for the receipt: client identity + session + call correlation id. */
+export function requesterFor(msg: ToolCallRequest, proxy: GateProxy): Requester {
+  return {
+    ...(proxy.clientName ? { client: proxy.clientName } : {}),
+    session: proxy.sessionId,
+    call_id: String(msg.id),
+  };
+}
+
+/** Progress heartbeat so clients with resetTimeoutOnProgress don't give up while a human decides. */
+export function startHeartbeat(
+  proxy: GateProxy,
+  progressToken: string | number,
+  tool: string,
+): ReturnType<typeof setInterval> {
+  let beats = 0;
+  return setInterval(() => {
+    void proxy
+      .sendProgress(progressToken, ++beats, `daemonsudo: waiting for approval of '${tool}'`)
+      .catch(() => {});
+  }, PROGRESS_INTERVAL_MS);
+}
 
 /**
  * The decision flow for intercepted tools/call requests:
@@ -181,22 +204,11 @@ export class ToolGate implements Interceptor {
     return true; // we never forwarded the request, so swallow the cancellation
   }
 
-  /** Who is asking, for the receipt: client identity + session + call correlation id. */
-  private requesterFor(msg: ToolCallRequest, proxy: GateProxy): Requester {
-    return {
-      ...(proxy.clientName ? { client: proxy.clientName } : {}),
-      session: proxy.sessionId,
-      call_id: String(msg.id),
-    };
-  }
-
   async handleToolCall(msg: ToolCallRequest, proxy: GateProxy): Promise<void> {
     const tool = msg.params.name;
 
-    // Hold the MCP request open while parked; heartbeat progress so clients
-    // with resetTimeoutOnProgress don't give up while a human decides.
+    // Hold the MCP request open while parked.
     const progressToken = msg.params._meta?.progressToken;
-    let beats = 0;
     let heartbeat: ReturnType<typeof setInterval> | undefined;
 
     try {
@@ -205,19 +217,13 @@ export class ToolGate implements Interceptor {
           server: proxy.serverName,
           tool,
           args: msg.params.arguments ?? {},
-          requester: this.requesterFor(msg, proxy),
+          requester: requesterFor(msg, proxy),
           origin: "mcp",
         },
         {
           onParked: (parked) => {
             this.parked.set(msg.id, parked.id);
-            if (progressToken !== undefined) {
-              heartbeat = setInterval(() => {
-                void proxy
-                  .sendProgress(progressToken, ++beats, `daemonsudo: waiting for approval of '${tool}'`)
-                  .catch(() => {});
-              }, PROGRESS_INTERVAL_MS);
-            }
+            if (progressToken !== undefined) heartbeat = startHeartbeat(proxy, progressToken, tool);
           },
         },
       );

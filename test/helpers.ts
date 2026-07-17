@@ -39,7 +39,7 @@ export async function spawnServe(opts: {
   tokenPath: string;
   healthUrls: string[];
   env?: Record<string, string>;
-}): Promise<{ kill(): void }> {
+}): Promise<{ kill(signal?: number | NodeJS.Signals): void }> {
   const configPath = join(tmpDir(), "gate.yaml");
   writeFileSync(configPath, opts.configYaml);
   const proc = Bun.spawn(["bun", join(ROOT, "src", "index.ts"), "serve", "--config", configPath], {

@@ -12,10 +12,11 @@
  */
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { Hono } from "hono";
+import { ulid } from "ulid";
 import { ApprovalBroker, type BrokerDecision } from "./broker.js";
 import { TelegramChannel } from "./channels/telegram.js";
 import { defaultDbPath, loadConfig } from "./config.js";
-import { DecisionCore } from "./core.js";
+import { DecisionCore, type ExecutionResult } from "./core.js";
 import { BOOT_ID, createGrantWithReceipt, GrantStore, revokeGrantWithReceipt } from "./grants.js";
 import { openDb } from "./db.js";
 import {
@@ -72,6 +73,24 @@ export async function runServe(configPath?: string): Promise<void> {
     const cutoff = Date.now() - STASH_TTL_MS;
     for (const [k, v] of stash) if (v.ts < cutoff) stash.delete(k);
   };
+
+  // Remote-proxy decision stash: call_ref → the receipt closure awaiting the
+  // proxy's result report. Expiry means the proxy crashed post-decision —
+  // write the receipt without a result and say so loudly (documented gap,
+  // same class as the CC stash-expiry note above).
+  const mcpStash = new Map<string, { tool: string; ts: number; recordResult: (r?: ExecutionResult) => void }>();
+  const mcpSweeper = setInterval(() => {
+    const cutoff = Date.now() - STASH_TTL_MS;
+    for (const [ref, entry] of mcpStash) {
+      if (entry.ts >= cutoff) continue;
+      mcpStash.delete(ref);
+      console.error(
+        `daemonsudo serve: WARNING — no result report for allowed call '${entry.tool}' (${ref}); ` +
+          "writing its receipt without a result (remote proxy crashed post-execute?)",
+      );
+      entry.recordResult();
+    }
+  }, 60_000);
 
   function register(app: Hono): void {
     // PermissionRequest hook → park with broker, block until human decides.
@@ -186,6 +205,79 @@ export async function runServe(configPath?: string): Promise<void> {
       return c.json({ ok: true });
     });
 
+    // Remote-broker mode: the in-container proxy asks; this daemon decides
+    // (rules → grants → park), owns every receipt, and hands back a call_ref
+    // the proxy must report the result under.
+    app.post("/gate/mcp/call", async (c) => {
+      if (!checkToken(c.req.header("x-daemonsudo-token"), token)) {
+        return c.json({ error: "unauthorized" }, 401);
+      }
+      let body: { server: string; tool: string; args: unknown; requester?: { client?: string; session: string; call_id: string } };
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: "bad json" }, 400);
+      }
+      if (!body.server || !body.tool) return c.json({ error: "server and tool required" }, 400);
+
+      // Proxy hung up mid-decision → cancel the parked row (its request died).
+      let parkedId: string | undefined;
+      const cancelOnAbort = () => { if (parkedId) broker.cancel(parkedId, "proxy-disconnect"); };
+      c.req.raw.signal.addEventListener("abort", cancelOnAbort, { once: true });
+
+      let outcome;
+      try {
+        outcome = await core.evaluate(
+          { server: body.server, tool: body.tool, args: body.args ?? {}, requester: body.requester, origin: "mcp" },
+          { onParked: (p) => { parkedId = p.id; } },
+        );
+      } finally {
+        c.req.raw.signal.removeEventListener("abort", cancelOnAbort);
+      }
+
+      if (outcome.kind === "block") {
+        // Terminal receipt already written by the core.
+        return c.json({
+          decision: "deny",
+          status: outcome.decision,
+          ...(outcome.reason ? { reason: outcome.reason } : {}),
+        });
+      }
+
+      const callRef = ulid();
+      mcpStash.set(callRef, { tool: body.tool, ts: Date.now(), recordResult: outcome.recordResult });
+      return c.json({
+        decision: "allow",
+        call_ref: callRef,
+        mode: outcome.grantId ? "grant" : outcome.decision,
+        ...(outcome.grantId ? { grant_id: outcome.grantId } : {}),
+      });
+    });
+
+    app.post("/gate/mcp/result", async (c) => {
+      if (!checkToken(c.req.header("x-daemonsudo-token"), token)) {
+        return c.json({ error: "unauthorized" }, 401);
+      }
+      let body: { call_ref: string; status: string; content_hash: string };
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: "bad json" }, 400);
+      }
+      const entry = mcpStash.get(body.call_ref ?? "");
+      if (!entry) return c.json({ error: "unknown call_ref" }, 404);
+      // Malformed reports must not land in the signed chain as fake "ok"s.
+      if (body.status !== "ok" && body.status !== "error") {
+        return c.json({ error: "status must be 'ok' or 'error'" }, 400);
+      }
+      if (typeof body.content_hash !== "string" || !body.content_hash) {
+        return c.json({ error: "content_hash required" }, 400);
+      }
+      mcpStash.delete(body.call_ref);
+      entry.recordResult({ status: body.status, content_hash: body.content_hash });
+      return c.json({ ok: true });
+    });
+
     // Grants CLI → daemon: the daemon stays the ledger's single writer.
     app.post("/gate/grants", async (c) => {
       if (!checkToken(c.req.header("x-daemonsudo-token"), token)) {
@@ -287,6 +379,7 @@ export async function runServe(configPath?: string): Promise<void> {
   const shutdown = () => {
     if (closing) return;
     closing = true;
+    clearInterval(mcpSweeper);
     web.stop();
     stopGateListener?.();
     try { db.exec("PRAGMA wal_checkpoint(TRUNCATE);"); } catch {}
