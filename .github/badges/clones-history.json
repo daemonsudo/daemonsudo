@@ -807,8 +807,13 @@
       "timestamp": "2026-11-08T00:00:00Z",
       "count": 1,
       "uniques": 1
+    },
+    {
+      "timestamp": "2026-11-09T00:00:00Z",
+      "count": 20,
+      "uniques": 11
     }
   ],
-  "total": 1004,
-  "total_uniques": 665
+  "total": 1024,
+  "total_uniques": 676
 }
